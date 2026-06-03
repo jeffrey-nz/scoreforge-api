@@ -1,5 +1,6 @@
 """Music-theory validation via theory_check.py."""
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -29,11 +30,13 @@ def validate_piece(req: ValidateRequest):
     if req.bars:
         args += ["--bars", str(req.bars)]
 
+    env = {**os.environ, "MIDI_OUTPUT_DIR": str(MIDI_OUTPUT_DIR)}
     result = subprocess.run(
         args,
         capture_output=True,
         text=True,
         cwd=str(CORE_DIR),
+        env=env,
     )
     if result.returncode != 0 and not result.stdout.strip():
         raise HTTPException(status_code=500, detail=result.stderr[:500])
@@ -47,10 +50,12 @@ def validate_piece(req: ValidateRequest):
 def validate_all():
     """Run music-theory validation across every piece in the MIDI output directory."""
     args = [PYTHON, "-u", str(CORE_DIR / "theory_check.py"), "--all"]
+    env = {**os.environ, "MIDI_OUTPUT_DIR": str(MIDI_OUTPUT_DIR)}
     result = subprocess.run(
         args,
         capture_output=True,
         text=True,
         cwd=str(CORE_DIR),
+        env=env,
     )
     return {"returncode": result.returncode, "output": result.stdout, "errors": result.stderr}

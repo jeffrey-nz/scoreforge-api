@@ -21,12 +21,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
 DASHBOARD     = Path(__file__).parent
-SHOWCASE_MIDI = DASHBOARD / 'showcase-midi'
+SHOWCASE_MIDI = Path(os.environ.get('MIDI_OUTPUT_DIR', str(DASHBOARD / 'showcase-midi')))
 
 PITCH_CLASS = {
     'C': 0, 'C#': 1, 'DB': 1, 'D': 2, 'D#': 3, 'EB': 3, 'E': 4, 'F': 5,
