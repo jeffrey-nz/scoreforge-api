@@ -209,6 +209,28 @@ async def run_read(job: Job):
     await job.emit('step', {'step': 'read', 'status': 'running', 'pct': 2,
                             'msg': 'Starting AI transcription…'})
 
+    # ── Pre-flight: check AI bridge is reachable before launching subprocess ───
+    # This gives a clear, immediate error rather than waiting for the subprocess
+    # to time out and exit with a cryptic non-zero code.
+    _ensure_core_on_path()
+    import ai_correct as _ac
+    loop = asyncio.get_event_loop()
+    bridge_ok = await loop.run_in_executor(None, _ac._bridge_ping)
+    if not bridge_ok:
+        msg = (f'browser-ai-bridge is not running at {_ac.BRIDGE_URL} — '
+               f'start it (and ensure a Gemini/ChatGPT tab is open) then rerun this step')
+        step.status = 'error'
+        step.issues = [{'severity': 'error', 'check': 'bridge', 'msg': msg}]
+        step.log.append(f'[pre-check] {msg}')
+        job.log_step_end('read')
+        job.save()
+        await job.emit('step', {'step': 'read', 'status': 'error', 'pct': 2,
+                                'result': None, 'issues': step.issues})
+        return
+
+    step.pct = 5
+    await job.emit('progress', {'step': 'read', 'pct': 5, 'msg': 'AI bridge ✓ — transcribing…'})
+
     out_dir = job.out_dir
     env = {
         **os.environ,
