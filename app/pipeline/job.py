@@ -7,9 +7,11 @@ Each job tracks six discrete steps:
   pitch   – mechanical pitch check + AI bar refinement
   rhythm  – mechanical rhythm check + AI bar refinement
   theory  – rule-based music-theory validation
-  review  – human sign-off (approve or edit)
+  review  – human sign-off (approve, edit, or feedback → AI re-pass)
 
 State is kept in memory and snapshotted to _job/state.json for resumability.
+A structured pipeline.log.json is also written on every step boundary and
+feedback round so the full run can be analysed after the fact.
 """
 from __future__ import annotations
 
@@ -64,7 +66,21 @@ class Job:
         self.meta: Dict = {}         # {key, timeSig, bpm, title, composer}
 
         self._queues: List[asyncio.Queue] = []
-        self._task: Optional[asyncio.Task] = None   # running step task
+        self._task: Optional[asyncio.Task] = None
+
+        # ── Pipeline log (written to pipeline.log.json on every boundary) ──────
+        self._step_start_times: Dict[str, float] = {}
+        self.pipeline_log: Dict = {
+            'job_id': self.id,
+            'piece_id': piece_id,
+            'title': title,
+            'composer': composer,
+            'provider': provider,
+            'started_at': time.time(),
+            'approved_at': None,
+            'steps': {},
+            'feedback_rounds': [],
+        }
 
     # ── Serialisation ──────────────────────────────────────────────────────────
 
@@ -89,6 +105,57 @@ class Job:
         (job_dir / 'state.json').write_text(
             json.dumps(self.to_dict(), indent=2), encoding='utf-8'
         )
+        self._flush_pipeline_log()
+
+    # ── Pipeline logging ───────────────────────────────────────────────────────
+
+    def log_step_start(self, step_name: str):
+        self._step_start_times[step_name] = time.time()
+        self.pipeline_log['steps'].setdefault(step_name, {})['started_at'] = time.time()
+        self.pipeline_log['steps'][step_name]['status'] = 'running'
+        self._flush_pipeline_log()
+
+    def log_step_end(self, step_name: str):
+        now = time.time()
+        start = self._step_start_times.get(step_name, now)
+        entry = self.pipeline_log['steps'].setdefault(step_name, {})
+        entry['completed_at'] = now
+        entry['duration_s'] = round(now - start, 1)
+        entry['status'] = self.steps[step_name].status
+        entry['result'] = self.steps[step_name].result
+        entry['issue_count'] = len(self.steps[step_name].issues)
+        entry['log_lines'] = len(self.steps[step_name].log)
+        self._flush_pipeline_log()
+
+    def log_feedback(self, feedback: str, corrections: List[Dict], applied: int):
+        self.pipeline_log['feedback_rounds'].append({
+            'at': time.time(),
+            'feedback': feedback,
+            'corrections_requested': len(corrections),
+            'corrections_applied': applied,
+        })
+        self._flush_pipeline_log()
+
+    def log_approved(self):
+        self.pipeline_log['approved_at'] = time.time()
+        self._flush_pipeline_log()
+
+    def _flush_pipeline_log(self):
+        """Write pipeline.log.json — full log including step stdout."""
+        try:
+            job_dir = self.out_dir / '_job'
+            job_dir.mkdir(parents=True, exist_ok=True)
+            log = dict(self.pipeline_log)
+            log['job_id'] = self.id
+            # Embed full log lines from each step for offline analysis
+            for sname, step in self.steps.items():
+                if sname in log['steps']:
+                    log['steps'][sname]['log'] = step.log
+            (job_dir / 'pipeline.log.json').write_text(
+                json.dumps(log, indent=2), encoding='utf-8'
+            )
+        except Exception:
+            pass
 
     # ── Event pub/sub ──────────────────────────────────────────────────────────
 

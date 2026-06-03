@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from app.config import MIDI_OUTPUT_DIR
 from app.pipeline.job import create_job, get_job, list_jobs, Job, STEP_ORDER
-from app.pipeline.steps import run_step, run_approve
+from app.pipeline.steps import run_step, run_approve, run_feedback
 
 router = APIRouter()
 
@@ -114,7 +114,8 @@ async def job_stream(job_id: str):
                 try:
                     msg = await asyncio.wait_for(q.get(), timeout=25.0)
                     yield _sse(msg['type'], msg['data'])
-                    if msg['type'] == 'step' and msg['data'].get('status') == 'approved':
+                    if (msg['type'] == 'step' and
+                            msg['data'].get('status') == 'approved'):
                         break
                 except asyncio.TimeoutError:
                     yield _sse('ping', {})
@@ -167,6 +168,46 @@ async def approve_job(job_id: str):
         raise HTTPException(400, "No bars to approve — run the read step first")
     asyncio.create_task(run_approve(job))
     return {"ok": True}
+
+
+# ── Feedback AI pass ───────────────────────────────────────────────────────────
+
+class FeedbackRequest(BaseModel):
+    feedback: str
+
+
+@router.post("/jobs/{job_id}/feedback")
+async def submit_feedback(job_id: str, req: FeedbackRequest):
+    """Send human feedback to AI for a targeted correction pass.
+
+    The AI receives the full bar listing plus the feedback text and returns
+    specific bar rewrites. Corrections are applied in-place and a
+    'bars_updated' SSE event is emitted so connected clients refresh.
+    """
+    job = _require_job(job_id)
+    if not job.bars:
+        raise HTTPException(400, "No bars yet — run the read step first")
+    fb = (req.feedback or '').strip()
+    if not fb:
+        raise HTTPException(400, "feedback text is required")
+    asyncio.create_task(run_feedback(job, fb))
+    return {"ok": True, "feedback": fb}
+
+
+# ── Pipeline log ───────────────────────────────────────────────────────────────
+
+@router.get("/jobs/{job_id}/log")
+def get_pipeline_log(job_id: str):
+    """Return the structured pipeline log for offline analysis."""
+    job = _require_job(job_id)
+    log_path = job.out_dir / '_job' / 'pipeline.log.json'
+    if not log_path.exists():
+        return job.pipeline_log
+    try:
+        import json as _json
+        return _json.loads(log_path.read_text(encoding='utf-8'))
+    except Exception:
+        return job.pipeline_log
 
 
 # ── Bar access / editing ───────────────────────────────────────────────────────

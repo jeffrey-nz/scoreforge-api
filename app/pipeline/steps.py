@@ -123,6 +123,7 @@ async def run_detect(job: Job):
     step = job.steps['detect']
     step.status = 'running'
     step.pct = 5
+    job.log_step_start('detect')
     await job.emit('step', {'step': 'detect', 'status': 'running', 'pct': 5,
                             'msg': 'Rendering PDF pages…'})
 
@@ -176,6 +177,7 @@ async def run_detect(job: Job):
     step.result = result
     step.status = 'done'
     step.pct = 100
+    job.log_step_end('detect')
     job.save()
     await job.emit('step', {'step': 'detect', 'status': 'done', 'pct': 100, 'result': result})
 
@@ -203,6 +205,7 @@ async def run_read(job: Job):
     step = job.steps['read']
     step.status = 'running'
     step.pct = 2
+    job.log_step_start('read')
     await job.emit('step', {'step': 'read', 'status': 'running', 'pct': 2,
                             'msg': 'Starting AI transcription…'})
 
@@ -260,6 +263,7 @@ async def run_read(job: Job):
         step.status = 'error'
         step.issues = [{'severity': 'error', 'msg': 'AI transcription failed — see log above'}]
         step.pct = step.pct or 10
+        job.log_step_end('read')
         job.save()
         await job.emit('step', {'step': 'read', 'status': 'error', 'pct': step.pct})
         return
@@ -280,6 +284,7 @@ async def run_read(job: Job):
     step.result = result
     step.status = 'done'
     step.pct = 100
+    job.log_step_end('read')
     job.save()
     await job.emit('step', {'step': 'read', 'status': 'done', 'pct': 100, 'result': result})
 
@@ -472,6 +477,7 @@ async def run_pitch(job: Job):
     step = job.steps['pitch']
     step.status = 'running'
     step.pct = 5
+    job.log_step_start('pitch')
     await job.emit('step', {'step': 'pitch', 'status': 'running', 'pct': 5,
                             'msg': 'Checking note pitches…'})
 
@@ -521,6 +527,7 @@ async def run_pitch(job: Job):
     step.issues = remaining_issues
     step.status = 'done'
     step.pct = 100
+    job.log_step_end('pitch')
     job.save()
     await job.emit('step', {'step': 'pitch', 'status': 'done', 'pct': 100, 'result': result})
 
@@ -551,6 +558,7 @@ async def run_rhythm(job: Job):
     step = job.steps['rhythm']
     step.status = 'running'
     step.pct = 5
+    job.log_step_start('rhythm')
     await job.emit('step', {'step': 'rhythm', 'status': 'running', 'pct': 5,
                             'msg': 'Checking note durations…'})
 
@@ -605,6 +613,7 @@ async def run_rhythm(job: Job):
     step.issues = remaining_issues
     step.status = 'done'
     step.pct = 100
+    job.log_step_end('rhythm')
     job.save()
     await job.emit('step', {'step': 'rhythm', 'status': 'done', 'pct': 100, 'result': result})
 
@@ -615,6 +624,7 @@ async def run_theory(job: Job):
     step = job.steps['theory']
     step.status = 'running'
     step.pct = 10
+    job.log_step_start('theory')
     await job.emit('step', {'step': 'theory', 'status': 'running', 'pct': 10,
                             'msg': 'Running music-theory validation…'})
 
@@ -653,6 +663,7 @@ async def run_theory(job: Job):
     step.issues = issues
     step.status = 'done'
     step.pct = 100
+    job.log_step_end('theory')
     job.save()
     await job.emit('step', {'step': 'theory', 'status': 'done', 'pct': 100,
                             'result': step.result, 'issues': issues})
@@ -699,9 +710,128 @@ async def run_approve(job: Job):
     await _write_bars_to_midi(job)
     job.approved = True
     step.status = 'approved'
+    job.log_approved()
     job.save()
     await job.emit('step', {'step': 'review', 'status': 'approved', 'pct': 100,
                             'msg': 'Import complete — piece added to showcase'})
+
+
+# ── Human-feedback AI correction pass ─────────────────────────────────────────
+
+def _serialize_bars_for_feedback(bars: List[Dict], max_bars: int = 60) -> str:
+    """Compact text representation of bars for the feedback prompt."""
+    lines = []
+    for bar in bars[:max_bars]:
+        n   = bar.get('n', '?')
+        mel = (bar.get('melody') or '').strip() or '(empty)'
+        bas = (bar.get('bass')   or '').strip() or '(empty)'
+        lines.append(f'Bar {n}: Melody: {mel} | Bass: {bas}')
+    if len(bars) > max_bars:
+        lines.append(f'… ({len(bars) - max_bars} more bars not shown)')
+    return '\n'.join(lines)
+
+
+def _feedback_prompt(title: str, composer: str, key: str, timesig: str,
+                     bars_text: str, feedback: str) -> str:
+    keyline = f' The piece is in {key}.' if key else ''
+    return f"""You are correcting a sheet music transcription of "{title}" by {composer}.{keyline}
+Time signature: {timesig}.
+
+Current transcription:
+{bars_text}
+
+Human feedback: "{feedback}"
+
+Based on this feedback, identify and correct the specific bars that have problems.
+Only include bars that need to change.
+
+Respond with JSON only — no prose, no markdown fences:
+{{
+  "corrections": [
+    {{"track": "melody", "bar": N, "rewrite": "C5(q) E5(8) G5(8) ...", "reason": "..."}},
+    {{"track": "bass",   "bar": M, "rewrite": "C3(h) G2(h)",           "reason": "..."}}
+  ]
+}}
+
+Notation: scientific pitch C4=middle C; durations w h q 8 16 32, dot=dotted; R(dur)=rest.
+Each rewrite must fill exactly one {timesig} measure. Use rests to fill held notes and gaps."""
+
+
+async def run_feedback(job: Job, feedback: str):
+    """Apply human free-text feedback via an AI correction pass.
+
+    Serialises the current bars, sends them plus the feedback to the AI bridge,
+    applies the returned corrections, then emits a 'bars_updated' event with
+    the patched bars so the client can refresh the table.
+    """
+    _ensure_core_on_path()
+    import ai_correct as ac
+    import ai_transcribe as atr
+
+    step = job.steps['review']
+    step.status = 'running'
+    step.pct = 10
+    await job.emit('step', {'step': 'review', 'status': 'running', 'pct': 10,
+                            'msg': 'Applying feedback…'})
+    step.log.append(f'[feedback] {feedback}')
+
+    if not ac._bridge_ping():
+        step.status = 'idle'
+        await job.emit('step', {'step': 'review', 'status': 'idle', 'pct': 0,
+                                'msg': 'AI bridge not reachable — check browser-ai-bridge'})
+        return
+
+    bars_text = _serialize_bars_for_feedback(job.bars)
+    prompt    = _feedback_prompt(
+        job.title, job.composer,
+        job.meta.get('key', ''), job.meta.get('timeSig', '4/4'),
+        bars_text, feedback,
+    )
+
+    await job.emit('progress', {'step': 'review', 'pct': 30,
+                                'msg': 'Sending to AI…'})
+    step.pct = 30
+
+    loop = asyncio.get_event_loop()
+    try:
+        response = await loop.run_in_executor(
+            None, lambda: ac._bridge_ask(prompt, provider=job.provider)
+        )
+        data = atr._parse_json(response)
+    except Exception as e:
+        step.status = 'idle'
+        step.log.append(f'[feedback error] {e}')
+        await job.emit('step', {'step': 'review', 'status': 'idle', 'pct': 0,
+                                'msg': f'AI call failed: {e}'})
+        return
+
+    corrections = data.get('corrections', [])
+    applied = 0
+    for c in corrections:
+        try:
+            idx   = int(c['bar']) - 1
+            track = (c.get('track') or 'melody').lower()
+            rew   = (c.get('rewrite') or '').strip()
+        except (KeyError, TypeError, ValueError):
+            continue
+        if track in ('melody', 'bass') and rew and 0 <= idx < len(job.bars):
+            job.bars[idx][track]      = rew
+            job.bars[idx]['ai_fixed'] = True
+            applied += 1
+
+    step.log.append(f'[feedback] applied {applied}/{len(corrections)} correction(s)')
+    job.log_feedback(feedback, corrections, applied)
+
+    step.status = 'idle'
+    step.pct    = 0
+    job.save()
+
+    await job.emit('step', {
+        'step': 'review', 'status': 'idle', 'pct': 0,
+        'msg': f'Applied {applied} correction(s) — review the table and approve or refine',
+    })
+    await job.emit('bars_updated', {'bars': job.bars, 'applied': applied,
+                                    'feedback': feedback})
 
 
 # ── Step runner ────────────────────────────────────────────────────────────────
