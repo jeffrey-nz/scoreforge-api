@@ -614,6 +614,9 @@ Notation rules:
     the first full barline (Für Elise opens with just two sixteenths, "E5 D#5"),
     transcribe ONLY those few printed notes as a short first bar. Do NOT add
     leading rests to pad it to a full measure, and do NOT merge it into bar 2.
+    If the other staff has nothing printed during that pickup (e.g. the left
+    hand has not entered yet), write that staff as exactly "(empty)" — never as
+    a rest like "R(8)".
   - The "melody" and "bass" in one bar entry are the SAME measure, vertically
     aligned by the barline — do not pair one bar's treble with another's bass.
   - List notes left-to-right in time order; for a chord list its notes in order.
@@ -1196,6 +1199,50 @@ def _mechanical_cleanup(tracks):
     return tracks
 
 
+_TOK_RE = re.compile(r'([A-Ga-gR][#b]?-?\d*)\([^)]*\)')
+
+
+def _is_empty_staff(s):
+    return not s or str(s).strip().lower() in ('(empty)', 'empty', '')
+
+
+def _is_rest_only(s):
+    """True if the staff string contains only rests (no pitched note)."""
+    if _is_empty_staff(s):
+        return False
+    toks = _TOK_RE.findall(str(s))
+    return bool(toks) and all(t.upper().startswith('R') for t in toks)
+
+
+def _strip_leading_rests(s):
+    """Drop any rest tokens at the very start of a staff string."""
+    if _is_empty_staff(s):
+        return s
+    return re.sub(r'^\s*(?:R[#b]?-?\d*\([^)]*\)\s*)+', '', str(s)).strip()
+
+
+def _normalize_bar_rests(bars):
+    """Silence is silence — a staff that is only rests becomes '(empty)' (the
+    prompt's own rule, enforced deterministically). The first bar is a
+    pickup/anacrusis: it never starts with a printed rest before its notes, so
+    strip any leading rests there too. Fixes the classic Für Elise pickup where
+    the model writes a stray bass 'R(8)' (or pads the melody with leading rests)
+    instead of leaving the silent staff empty."""
+    for idx, bar in enumerate(bars):
+        if not isinstance(bar, dict):
+            continue
+        for tr in ('melody', 'bass'):
+            s = bar.get(tr, '')
+            if idx == 0 and not _is_empty_staff(s):
+                stripped = _strip_leading_rests(s)
+                if stripped != s:
+                    s = stripped or '(empty)'
+                    bar[tr] = s
+            if _is_rest_only(s):
+                bar[tr] = '(empty)'
+    return bars
+
+
 def _write_piece(piece_id, out_dir, all_bars, meta):
     """Write melody/bass/pad/drums MIDI + catalog.json for the current bars."""
     from pdf_to_midi import write_midi_track
@@ -1498,6 +1545,7 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
         if truncated:
             meta['bpm'] = bpm_override or meta['bpm'] or 100
             _save_meta()
+            _normalize_bar_rests(all_bars)
             _write_piece(piece_id, out_dir, all_bars, meta)
             try:
                 page_done.write_text(
@@ -1649,6 +1697,7 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
                             _write_piece(piece_id, out_dir, all_bars, meta)
 
         # ── Cache the finished page so a re-run skips it entirely ────────────
+        _normalize_bar_rests(all_bars)
         try:
             page_done.write_text(json.dumps({'bars': all_bars[lo - 1:hi]},
                                             indent=1), encoding='utf-8')
@@ -1704,6 +1753,7 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
             _log(f'key kept: "{meta["key"]}" '
                  f'(fit {("%.0f%%" % (ai_fit*100)) if ai_fit is not None else "n/a"})')
 
+    _normalize_bar_rests(all_bars)
     tracks = _write_piece(piece_id, out_dir, all_bars, meta)
     (pages_dir / 'pages.json').write_text(
         json.dumps({'pages': page_manifest, 'bars': len(all_bars)}, indent=2),
