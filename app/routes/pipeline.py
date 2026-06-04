@@ -326,17 +326,29 @@ def get_page_image(job_id: str, page_n: int):
 
 class SuggestMetaRequest(BaseModel):
     filename: str
+    force: bool = False   # bypass the cache and re-ask the AI
 
 
 @router.post("/suggest-meta")
 async def suggest_meta(req: SuggestMetaRequest):
     """Ask the AI bridge to infer title + composer from a filename.
 
-    Returns {title, composer} or raises 503 if the bridge is unreachable.
+    The result is cached by filename, so a repeat returns instantly instead of
+    waiting ~30-40s on the browser AI. Pass force=true to re-ask.
+    Returns {title, composer, cached} or 503 if the bridge is unreachable.
     """
     import re as _re
     import sys as _sys
     from app.config import CORE_DIR
+    from app.cache import ai_cache
+
+    filename = req.filename.strip()
+
+    # Cache hit — return immediately, no AI call.
+    if not req.force:
+        hit = ai_cache.get("suggest_meta", filename)
+        if hit:
+            return {**hit, "cached": True}
 
     core = str(CORE_DIR)
     if core not in _sys.path:
@@ -349,7 +361,6 @@ async def suggest_meta(req: SuggestMetaRequest):
     if not bridge_up:
         raise HTTPException(503, "AI bridge not available — start browser-ai-bridge first")
 
-    filename = req.filename.strip()
     prompt = f"""A user is importing a sheet music file named "{filename}".
 
 Identify the most likely piece title and composer based on the filename.
@@ -364,10 +375,14 @@ Respond with JSON only — no prose, no markdown:
             None, lambda: ac._bridge_ask(prompt, provider='gemini')
         )
         data = json.loads(_re.search(r'\{[^{}]+\}', response, _re.DOTALL).group())
-        return {
+        result = {
             'title':    str(data.get('title', '')).strip(),
             'composer': str(data.get('composer', '')).strip(),
         }
+        # Only cache a non-empty result.
+        if result['title'] or result['composer']:
+            ai_cache.set("suggest_meta", filename, result)
+        return {**result, "cached": False}
     except Exception as e:
         raise HTTPException(500, f"AI suggestion failed: {e}")
 

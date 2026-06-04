@@ -10,3 +10,6 @@ build/
 .pytest_cache/
 uploads/
 *.log
+
+# Persistent AI-response cache (machine-local)
+.cache/
