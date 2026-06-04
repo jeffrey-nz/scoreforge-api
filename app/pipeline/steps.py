@@ -490,6 +490,19 @@ async def run_redo_bar(job: Job, bar_n: int):
         job.steps['review'].log.append(f'[redo bar {bar_n}] {e}')
 
     # Re-run the mechanical pitch/rhythm checks on this bar only.
+    fresh = job.get_bar(bar_n)
+    if fresh:
+        _recheck_bar(job, fresh)
+    job.save()
+    await job.emit('bars_updated', {'bars': job.bars, 'pages': job.pages})
+    await job.emit('bar_status', {'n': bar_n, 'state': 'done', 'applied': applied})
+
+
+# ── Mechanical (AI-free) bar fixes ──────────────────────────────────────────────
+
+def _recheck_bar(job: Job, bar: Dict):
+    """Recompute a bar's mechanical pitch/rhythm issues + confidence against the
+    job's CURRENT meta (key / time signature). Mutates the bar in place."""
     _ensure_core_on_path()
     import ai_transcribe as atr
     key_pcs = atr._scale_pcs(job.meta.get('key', 'C major'))
@@ -498,18 +511,95 @@ async def run_redo_bar(job: Job, bar_n: int):
         bar_ticks = (num * 4 / den) * 16
     except Exception:
         bar_ticks = 4 * 16
-    fresh = job.get_bar(bar_n)
-    if fresh:
-        n_bars = len(job.bars)
-        p = _check_pitch_bar(fresh, key_pcs)
-        r = _check_rhythm_bar(fresh, bar_ticks, allow_short=(bar_n == 1 or bar_n == n_bars))
-        fresh['pitch_issues'] = p
-        fresh['rhythm_issues'] = r
-        fresh['issues'] = p + r
-        fresh['confidence'] = 1.0 if not (p + r) else (0.5 if len(p + r) <= 2 else 0.2)
-    job.save()
-    await job.emit('bars_updated', {'bars': job.bars, 'pages': job.pages})
-    await job.emit('bar_status', {'n': bar_n, 'state': 'done', 'applied': applied})
+    n_bars = len(job.bars)
+    bn = bar.get('n')
+    p = _check_pitch_bar(bar, key_pcs)
+    r = _check_rhythm_bar(bar, bar_ticks, allow_short=(bn == 1 or bn == n_bars))
+    bar['pitch_issues'] = p
+    bar['rhythm_issues'] = r
+    bar['issues'] = p + r
+    bar['confidence'] = 1.0 if not (p + r) else (0.5 if len(p + r) <= 2 else 0.2)
+    return bar
+
+
+def _recheck_all_bars(job: Job):
+    for bar in job.bars:
+        _recheck_bar(job, bar)
+
+
+_OCT_RE = re.compile(r'([A-Ga-g][#b]?)(-?\d+)')
+
+
+def _shift_octave_str(s: str, delta: int) -> str:
+    """Shift every pitched note in a compact bar string by `delta` octaves
+    (rests untouched), clamped to a sane MIDI-ish range."""
+    if not s or str(s).strip().lower() in ('(empty)', 'empty', ''):
+        return s
+    def repl(m):
+        octv = max(0, min(9, int(m.group(2)) + delta))
+        return f'{m.group(1)}{octv}'
+    return _OCT_RE.sub(repl, str(s))
+
+
+async def apply_bar_transform(job: Job, bar_n: int, op: str,
+                              track: str = 'both', delta: int = 0) -> bool:
+    """AI-free per-bar edit. ops: 'octave' (shift by delta), 'clear'."""
+    bar = job.get_bar(bar_n)
+    if bar is None:
+        return False
+    tracks = ('melody', 'bass') if track in ('both', None, '') else (track,)
+    changed = False
+    for tr in tracks:
+        if tr not in ('melody', 'bass'):
+            continue
+        cur = bar.get(tr, '')
+        if op == 'octave':
+            new = _shift_octave_str(cur, int(delta))
+        elif op == 'clear':
+            new = '(empty)'
+        else:
+            new = cur
+        if new != cur:
+            bar[tr] = new
+            changed = True
+    if changed:
+        bar['edited'] = True
+        bar['verified'] = False
+        _recheck_bar(job, bar)
+        job.save()
+        await job.emit('bars_updated', {'bars': job.bars, 'pages': job.pages})
+    return changed
+
+
+async def set_meta(job: Job, time_sig=None, key=None, bpm=None) -> bool:
+    """Mechanically change the piece meta (time signature / key / tempo) of an
+    already-transcribed piece, then re-run the mechanical checks so issue flags
+    and confidence reflect the new meter/key."""
+    _ensure_core_on_path()
+    import ai_transcribe as atr
+    changed = False
+    if time_sig:
+        ts = atr._sane_timesig(time_sig, None)
+        if ts and ts != job.meta.get('timeSig'):
+            job.meta['timeSig'] = ts
+            changed = True
+    if key and str(key).strip() and str(key).strip() != job.meta.get('key'):
+        job.meta['key'] = str(key).strip()
+        changed = True
+    if bpm:
+        try:
+            b = int(bpm)
+            if 20 <= b <= 400 and b != job.meta.get('bpm'):
+                job.meta['bpm'] = b
+                changed = True
+        except (TypeError, ValueError):
+            pass
+    if changed:
+        _recheck_all_bars(job)
+        job.save()
+        await job.emit('bars_updated',
+                       {'bars': job.bars, 'pages': job.pages, 'meta': job.meta})
+    return changed
 
 
 # ── Step 3: Pitch check ────────────────────────────────────────────────────────

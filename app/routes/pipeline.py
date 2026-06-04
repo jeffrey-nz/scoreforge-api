@@ -28,7 +28,7 @@ from app.pipeline.job import (create_job, get_job, list_jobs, discover_jobs,
                               remove_job, Job, STEP_ORDER)
 from app.pipeline.steps import (run_step, run_approve, run_feedback, run_read,
                                 run_recompile_page, cancel_job, run_redo_bar,
-                                bar_crop_path)
+                                bar_crop_path, apply_bar_transform, set_meta)
 
 router = APIRouter()
 
@@ -402,6 +402,39 @@ async def redo_bar(job_id: str, bar_n: int):
         raise HTTPException(404, f"Bar {bar_n} not found")
     asyncio.create_task(run_redo_bar(job, bar_n))
     return {"ok": True, "bar": bar_n}
+
+
+# ── Mechanical (AI-free) fixes ──────────────────────────────────────────────────
+
+class MetaPatch(BaseModel):
+    timeSig: Optional[str] = None
+    key: Optional[str] = None
+    bpm: Optional[int] = None
+
+
+@router.patch("/jobs/{job_id}/meta")
+async def patch_job_meta(job_id: str, m: MetaPatch):
+    """Change the current piece's time signature / key / tempo by hand and
+    re-run the mechanical checks (no AI)."""
+    job = _require_job(job_id)
+    await set_meta(job, time_sig=m.timeSig, key=m.key, bpm=m.bpm)
+    return {"ok": True, "meta": job.meta}
+
+
+class BarTransform(BaseModel):
+    op: str                      # 'octave' | 'clear'
+    track: str = 'both'          # 'melody' | 'bass' | 'both'
+    delta: int = 0               # octaves for 'octave'
+
+
+@router.post("/jobs/{job_id}/bars/{bar_n}/transform")
+async def transform_bar(job_id: str, bar_n: int, req: BarTransform):
+    """Apply a mechanical edit to one bar (octave shift / clear a staff)."""
+    job = _require_job(job_id)
+    if job.get_bar(bar_n) is None:
+        raise HTTPException(404, f"Bar {bar_n} not found")
+    ok = await apply_bar_transform(job, bar_n, req.op, req.track, req.delta)
+    return {"ok": ok}
 
 
 # ── Page-level segment operations ───────────────────────────────────────────────
