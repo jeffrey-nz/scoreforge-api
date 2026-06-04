@@ -831,6 +831,86 @@ def _find_bar_crop(bar_n: int, bars: List[Dict], pages_dir: Path) -> Optional[Pa
         return strip_path
 
 
+def generate_bar_crops(job: Job) -> int:
+    """Crop each bar from its page's system strips so an operator/Claude-driven
+    job has a source snippet in the review's Original pane. Writes
+    page_NN_bar_MMM.png for every bar plus a pages.json manifest (which
+    _find_bar_crop / the /crop endpoint rely on). Best-effort: a page that can't
+    be rendered/segmented is skipped. Returns the number of crops written."""
+    _ensure_core_on_path()
+    import ai_transcribe as atr
+    from PIL import Image
+    from collections import OrderedDict
+
+    pages_dir = job.out_dir / '_pages'
+    pages_dir.mkdir(parents=True, exist_ok=True)
+
+    by_page = OrderedDict()
+    for b in job.bars:
+        by_page.setdefault(int(b.get('page') or 1), []).append(b)
+
+    manifest_pages, written = [], 0
+    for pg, pbars in by_page.items():
+        png = pages_dir / f'page_{pg:02d}.png'
+        if not png.exists():
+            try:
+                atr._render_pdf_pages(job.pdf_path, pages_dir, want_pages={pg})
+            except Exception:
+                pass
+        if not png.exists():
+            continue
+        try:
+            strips = atr._split_page_into_systems(png, pages_dir, pg) or [png]
+        except Exception:
+            strips = [png]
+
+        # Collect every (strip, x1, x2) bar-slot across the page's systems, in
+        # reading order, from detected barlines (whole strip if none found).
+        boxes = []
+        for strip in strips:
+            try:
+                positions = atr._detect_barline_positions(strip)
+            except Exception:
+                positions = None
+            try:
+                w = Image.open(strip).width
+            except Exception:
+                continue
+            if positions and len(positions) >= 2:
+                for i in range(len(positions) - 1):
+                    boxes.append((strip, max(0, positions[i] - 5), min(w, positions[i + 1] + 5)))
+            else:
+                boxes.append((strip, 0, w))
+
+        nb, nbox = len(pbars), len(boxes)
+        for idx, bar in enumerate(pbars):
+            if not nbox:
+                break
+            # 1:1 when counts match, else map proportionally (best effort —
+            # operator bars may not line up exactly with detected barlines).
+            bi = idx if nb == nbox else min(nbox - 1, round(idx * nbox / max(1, nb)))
+            strip, x1, x2 = boxes[bi]
+            try:
+                im = Image.open(strip)
+                im.crop((x1, 0, x2, im.height)).save(
+                    str(pages_dir / f"page_{pg:02d}_bar_{bar['n']:03d}.png"))
+                written += 1
+            except Exception:
+                pass
+
+        manifest_pages.append({'file': f'page_{pg:02d}.png', 'page': pg,
+                               'startBar': pbars[0]['n'], 'endBar': pbars[-1]['n'],
+                               'status': 'done'})
+
+    try:
+        (pages_dir / 'pages.json').write_text(
+            json.dumps({'pages': manifest_pages, 'bars': len(job.bars)}, indent=2),
+            encoding='utf-8')
+    except Exception:
+        pass
+    return written
+
+
 async def run_pitch(job: Job):
     _ensure_core_on_path()
     import ai_transcribe as atr

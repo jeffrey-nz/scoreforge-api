@@ -29,7 +29,8 @@ from app.pipeline.job import (create_job, get_job, list_jobs, discover_jobs,
                               remove_job, Job, STEP_ORDER)
 from app.pipeline.steps import (run_step, run_approve, run_feedback, run_read,
                                 run_recompile_page, cancel_job, run_redo_bar,
-                                bar_crop_path, apply_bar_transform, set_meta)
+                                bar_crop_path, apply_bar_transform, set_meta,
+                                generate_bar_crops)
 
 router = APIRouter()
 
@@ -622,9 +623,28 @@ async def set_bars(job_id: str, req: SetBarsReq):
         job.steps['read'].status = 'done'
         job.steps['read'].pct = 100
     job.save()
+    # Crop each bar from its page so the review's Original pane has a source
+    # snippet (off the event loop — PIL work). Best-effort.
+    try:
+        loop = asyncio.get_event_loop()
+        n_crops = await loop.run_in_executor(None, lambda: generate_bar_crops(job))
+    except Exception:
+        n_crops = 0
     await job.emit('bars_updated', {'bars': job.bars, 'pages': job.pages, 'meta': job.meta})
-    await hub.activity(f'wrote {len(job.bars)} bar(s)', job=job.id)
-    return {"ok": True, "bars": len(job.bars)}
+    await hub.activity(f'wrote {len(job.bars)} bar(s); cropped {n_crops} source snippet(s)',
+                       job=job.id)
+    return {"ok": True, "bars": len(job.bars), "crops": n_crops}
+
+
+@router.post("/jobs/{job_id}/crops")
+async def regenerate_crops(job_id: str):
+    """(Re)generate per-bar source crops for a job — handy for operator jobs
+    created before crops were wired in."""
+    job = _require_job(job_id)
+    loop = asyncio.get_event_loop()
+    n = await loop.run_in_executor(None, lambda: generate_bar_crops(job))
+    await job.emit('bars_updated', {'bars': job.bars, 'pages': job.pages, 'meta': job.meta})
+    return {"ok": True, "crops": n}
 
 
 # ── Page-level segment operations ───────────────────────────────────────────────
