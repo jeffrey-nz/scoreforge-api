@@ -521,24 +521,60 @@ def _bridge_post(endpoint, payload, timeout, attempts, what):
     raise RuntimeError(f'bridge {what} failed after {attempts} attempts: {last_err}')
 
 
+# Cross-provider fallback order. If the requested provider fails (down, not
+# logged in, wedged session, unusable answer) the call retries on the next
+# provider — every provider now supports image upload, so sheet-music vision
+# survives a Gemini outage. Override/trim with AI_FALLBACK_PROVIDERS; set it to
+# a single provider to disable fallback.
+FALLBACK_PROVIDERS = [p.strip().lower() for p in os.environ.get(
+    'AI_FALLBACK_PROVIDERS', 'gemini,chatgpt,deepseek,copilot').split(',')
+    if p.strip()]
+
+
+def _provider_chain(primary):
+    """Ordered, de-duplicated list: the requested provider first, then the
+    configured fallbacks."""
+    chain = []
+    for p in [str(primary or '').lower()] + FALLBACK_PROVIDERS:
+        if p and p not in chain:
+            chain.append(p)
+    return chain or ['gemini']
+
+
+def _bridge_call(endpoint, base_payload, provider, timeout, attempts, what):
+    """POST to a bridge endpoint, falling back across providers on failure."""
+    chain = _provider_chain(provider)
+    last_err = None
+    for i, prov in enumerate(chain):
+        try:
+            return _bridge_post(endpoint, {**base_payload, 'provider': prov},
+                                timeout, attempts, f'{what}[{prov}]')
+        except Exception as e:
+            last_err = e
+            if i + 1 < len(chain):
+                print(f'[ai] {what}: provider "{prov}" failed ({e}); '
+                      f'falling back to "{chain[i + 1]}"', file=sys.stderr)
+    raise RuntimeError(f'{what} failed on all providers {chain}: {last_err}')
+
+
 def _bridge_ask(prompt, provider='gemini', timeout=420, attempts=3,
                 mode=BRIDGE_MODE):
-    """Send a prompt to the bridge and return the text response (with retries)."""
-    return _bridge_post('/api/ask', {'provider': provider, 'prompt': prompt,
-                                     'mode': mode},
-                        timeout, attempts, 'ask')
+    """Send a prompt to the bridge and return the text response (with retries
+    and cross-provider fallback)."""
+    return _bridge_call('/api/ask', {'prompt': prompt, 'mode': mode},
+                        provider, timeout, attempts, 'ask')
 
 
 def _bridge_image_ask(image_path, prompt, provider='gemini', timeout=420,
                       attempts=3, mode=BRIDGE_MODE):
-    """Upload an image to /api/image-ask and return the response (with retries)."""
-    return _bridge_post('/api/image-ask', {
-        'provider': provider,
+    """Upload an image to /api/image-ask and return the response (retries +
+    cross-provider fallback)."""
+    return _bridge_call('/api/image-ask', {
         'imagePath': str(image_path),
         'prompt': prompt,
         'label': 'sheet-music-visual-heal',
         'mode': mode,
-    }, timeout, attempts, 'image-ask')
+    }, provider, timeout, attempts, 'image-ask')
 
 
 def _bridge_audio_ask(audio_path, prompt, provider='gemini', timeout=600,
@@ -549,13 +585,12 @@ def _bridge_audio_ask(audio_path, prompt, provider='gemini', timeout=600,
     catch wrong notes / rhythm by ear. Longer timeout than image-ask because
     Gemini ingests the audio before it can answer.
     """
-    return _bridge_post('/api/audio-ask', {
-        'provider': provider,
+    return _bridge_call('/api/audio-ask', {
         'audioPath': str(audio_path),
         'prompt': prompt,
         'label': 'sheet-music-audio-validate',
         'mode': mode,
-    }, timeout, attempts, 'audio-ask')
+    }, provider, timeout, attempts, 'audio-ask')
 
 
 def capture_sheet_pages(piece_id, max_pages=4):
