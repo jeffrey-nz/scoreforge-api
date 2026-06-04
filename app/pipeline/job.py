@@ -93,10 +93,13 @@ class Job:
         return {
             'id': self.id,
             'piece_id': self.piece_id,
+            'pdf_path': self.pdf_path,
             'title': self.title,
             'composer': self.composer,
             'bpm': self.bpm,
             'provider': self.provider,
+            'pages_spec': self.pages_spec,
+            'max_bars': self.max_bars,
             'created': self.created,
             'approved': self.approved,
             'steps': {k: v.to_dict() for k, v in self.steps.items()},
@@ -104,6 +107,87 @@ class Job:
             'pages': self.pages,
             'meta': self.meta,
         }
+
+    def summary(self) -> Dict:
+        """Compact overview for the projects list."""
+        steps = {k: v.status for k, v in self.steps.items()}
+        return {
+            'id': self.id,
+            'piece_id': self.piece_id,
+            'title': self.title or self.piece_id,
+            'composer': self.composer,
+            'created': self.created,
+            'approved': self.approved,
+            'status': self.overall_status(),
+            'bars': len(self.bars),
+            'pages': len(self.pages),
+            'pendingPages': [p['page'] for p in self.pages if p.get('status') == 'pending'],
+            'steps': steps,
+            'running': any(s == 'running' for s in steps.values()),
+            'theory': (self.steps.get('theory').result or {}) if self.steps.get('theory') else {},
+        }
+
+    def overall_status(self) -> str:
+        """A single human label for the projects list."""
+        if self.approved:
+            return 'completed'
+        if any(s.status == 'running' for s in self.steps.values()):
+            return 'running'
+        if any(s.status == 'error' for s in self.steps.values()):
+            return 'error'
+        auto = ['detect', 'read', 'pitch', 'rhythm', 'theory']
+        done = [s for s in auto if self.steps[s].status == 'done']
+        if len(done) == len(auto):
+            return 'review'           # all checks done, awaiting approval
+        if self.steps['read'].status == 'done':
+            if any(p.get('status') == 'pending' for p in self.pages):
+                return 'partial'      # some pages still to compile
+            return 'in-progress'
+        return 'incomplete'
+
+    @classmethod
+    def from_dict(cls, d: Dict, out_dir) -> 'Job':
+        """Rehydrate a Job from a saved state.json (after a restart)."""
+        job = cls.__new__(cls)
+        job.id = d.get('id') or str(uuid.uuid4())
+        job.piece_id = d.get('piece_id', '')
+        job.pdf_path = d.get('pdf_path', '')
+        job.out_dir = Path(out_dir)
+        job.title = d.get('title', '')
+        job.composer = d.get('composer', '')
+        job.bpm = d.get('bpm')
+        job.provider = d.get('provider', 'gemini')
+        job.pages_spec = d.get('pages_spec')
+        job.max_bars = d.get('max_bars')
+        job.created = d.get('created', time.time())
+        job.approved = d.get('approved', False)
+        job.bars = d.get('bars', [])
+        job.pages = d.get('pages', [])
+        job.meta = d.get('meta', {})
+        job.cancelled = False
+        job._proc = None
+        job._queues = []
+        job._task = None
+        job._step_start_times = {}
+        job.pipeline_log = {'job_id': job.id, 'piece_id': job.piece_id,
+                            'steps': {}, 'feedback_rounds': []}
+
+        job.steps = {}
+        for name in STEP_ORDER + ['review']:
+            sd = (d.get('steps') or {}).get(name, {})
+            st = StepState()
+            st.status = sd.get('status', 'idle')
+            # A 'running' step can't really be running after a restart.
+            if st.status == 'running':
+                st.status = 'idle'
+                st.pct = 0
+            else:
+                st.pct = sd.get('pct', 0)
+            st.result = sd.get('result')
+            st.issues = sd.get('issues', [])
+            st.log = sd.get('log', [])
+            job.steps[name] = st
+        return job
 
     def save(self):
         job_dir = self.out_dir / '_job'
@@ -259,9 +343,35 @@ def create_job(**kwargs) -> Job:
     return job
 
 
+def discover_jobs(midi_output_dir) -> None:
+    """Rehydrate jobs persisted to <piece>/_job/state.json (e.g. after a
+    restart) into the in-memory store. In-memory jobs win (they may be running),
+    so an existing id is never overwritten."""
+    base = Path(midi_output_dir)
+    if not base.exists():
+        return
+    for state_path in base.glob('*/_job/state.json'):
+        try:
+            data = json.loads(state_path.read_text(encoding='utf-8'))
+        except Exception:
+            continue
+        jid = data.get('id')
+        if not jid or jid in _JOBS:
+            continue
+        try:
+            out_dir = state_path.parent.parent  # <piece>/
+            _JOBS[jid] = Job.from_dict(data, out_dir)
+        except Exception:
+            continue
+
+
 def get_job(job_id: str) -> Optional[Job]:
     return _JOBS.get(job_id)
 
 
 def list_jobs() -> List[Job]:
     return sorted(_JOBS.values(), key=lambda j: j.created, reverse=True)
+
+
+def remove_job(job_id: str) -> bool:
+    return _JOBS.pop(job_id, None) is not None

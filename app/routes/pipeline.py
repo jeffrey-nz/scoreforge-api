@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -23,7 +24,8 @@ from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 
 from app.config import MIDI_OUTPUT_DIR
-from app.pipeline.job import create_job, get_job, list_jobs, Job, STEP_ORDER
+from app.pipeline.job import (create_job, get_job, list_jobs, discover_jobs,
+                              remove_job, Job, STEP_ORDER)
 from app.pipeline.steps import (run_step, run_approve, run_feedback, run_read,
                                 run_recompile_page, cancel_job)
 
@@ -80,19 +82,41 @@ async def create_import_job(
 
 @router.get("/jobs")
 def get_jobs():
-    return [
-        {"id": j.id, "piece_id": j.piece_id, "title": j.title,
-         "created": j.created, "approved": j.approved,
-         "steps": {k: {"status": v.status, "pct": v.pct}
-                   for k, v in j.steps.items()}}
-        for j in list_jobs()[:20]
-    ]
+    """All import projects (in-memory + discovered from disk), newest first."""
+    discover_jobs(MIDI_OUTPUT_DIR)
+    return [j.summary() for j in list_jobs()]
 
 
 @router.get("/jobs/{job_id}")
 def get_job_state(job_id: str):
     job = _require_job(job_id)
     return job.to_dict()
+
+
+@router.delete("/jobs/{job_id}")
+async def delete_job(job_id: str):
+    """Delete an import project: stop it if running, drop it from memory, and
+    remove its files (MIDI, pages, job state)."""
+    job = get_job(job_id)
+    if job is None:
+        discover_jobs(MIDI_OUTPUT_DIR)
+        job = get_job(job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found")
+    # Stop anything running first.
+    try:
+        await cancel_job(job)
+    except Exception:
+        pass
+    out_dir = job.out_dir
+    remove_job(job_id)
+    # Remove the piece directory (best-effort).
+    try:
+        if out_dir and Path(out_dir).exists():
+            shutil.rmtree(out_dir, ignore_errors=True)
+    except Exception:
+        pass
+    return {"ok": True, "deleted": job_id}
 
 
 # ── SSE stream ─────────────────────────────────────────────────────────────────
@@ -391,6 +415,10 @@ Respond with JSON only — no prose, no markdown:
 
 def _require_job(job_id: str) -> Job:
     job = get_job(job_id)
+    if job is None:
+        # Rehydrate from disk (e.g. after a restart) before giving up.
+        discover_jobs(MIDI_OUTPUT_DIR)
+        job = get_job(job_id)
     if job is None:
         raise HTTPException(404, "Job not found")
     return job
