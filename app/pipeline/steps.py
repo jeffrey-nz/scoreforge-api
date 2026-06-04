@@ -488,10 +488,18 @@ async def _refine_bars(job: Job, flagged: Dict[int, List[str]], step_name: str) 
         if not crops:
             continue
 
-        # Build montage
-        montage = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: atr._build_montage([p for _, p in crops], [bn for bn, _ in crops])
-        )
+        # Build montage. _build_montage(items, out_png) wants items as
+        # [(bar_no, crop_path), …] — which `crops` already is — and an output
+        # path. Wrapped so a montage failure degrades gracefully (skip the
+        # chunk) instead of erroring the whole step.
+        montage_png = pages_dir / f'_refine_{step_name}_{chunk_start}.png'
+        try:
+            montage = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: atr._build_montage(crops, montage_png)
+            )
+        except Exception as e:
+            job.steps[step_name].log.append(f'[warn] montage build failed: {e}')
+            continue
         if not montage:
             continue
 
@@ -637,7 +645,10 @@ async def run_pitch(job: Job):
 
     fixed = 0
     if flagged:
-        fixed = await _refine_bars(job, flagged, 'pitch')
+        try:
+            fixed = await _refine_bars(job, flagged, 'pitch')
+        except Exception as e:
+            step.log.append(f'[warn] auto-fix skipped ({e})')
         step.log.append(f'auto-fixed {fixed} bar(s)')
         await job.emit('progress', {
             'step': 'pitch', 'pct': 90,
@@ -723,7 +734,10 @@ async def run_rhythm(job: Job):
 
     fixed = 0
     if flagged:
-        fixed = await _refine_bars(job, flagged, 'rhythm')
+        try:
+            fixed = await _refine_bars(job, flagged, 'rhythm')
+        except Exception as e:
+            step.log.append(f'[warn] auto-fix skipped ({e})')
         step.log.append(f'auto-fixed {fixed} bar(s)')
         await job.emit('progress', {
             'step': 'rhythm', 'pct': 90,
