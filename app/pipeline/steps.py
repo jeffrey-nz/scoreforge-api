@@ -450,6 +450,50 @@ async def run_recompile_page(job: Job, page: int):
         await run_step(job, 'pitch')
 
 
+# ── Per-bar helpers (bar-by-bar workspace) ──────────────────────────────────────
+
+def bar_crop_path(job: Job, bar_n: int):
+    """Path to the source PDF crop for a single bar (mechanical reference)."""
+    return _find_bar_crop(bar_n, job.bars, job.out_dir / '_pages')
+
+
+async def run_redo_bar(job: Job, bar_n: int):
+    """Re-transcribe a single bar with the AI from its high-res crop, then
+    re-check it mechanically. The bar's 'verified' flag is cleared."""
+    bar = job.get_bar(bar_n)
+    if bar is None:
+        return
+    bar['verified'] = False
+    await job.emit('bar_status', {'n': bar_n, 'state': 'redoing'})
+    applied = 0
+    try:
+        applied = await _refine_bars(job, {bar_n: ['manual redo requested']}, 'review')
+    except Exception as e:
+        job.steps['review'].log.append(f'[redo bar {bar_n}] {e}')
+
+    # Re-run the mechanical pitch/rhythm checks on this bar only.
+    _ensure_core_on_path()
+    import ai_transcribe as atr
+    key_pcs = atr._scale_pcs(job.meta.get('key', 'C major'))
+    try:
+        num, den = map(int, str(job.meta.get('timeSig', '4/4')).split('/'))
+        bar_ticks = (num * 4 / den) * 16
+    except Exception:
+        bar_ticks = 4 * 16
+    fresh = job.get_bar(bar_n)
+    if fresh:
+        n_bars = len(job.bars)
+        p = _check_pitch_bar(fresh, key_pcs)
+        r = _check_rhythm_bar(fresh, bar_ticks, allow_short=(bar_n == 1 or bar_n == n_bars))
+        fresh['pitch_issues'] = p
+        fresh['rhythm_issues'] = r
+        fresh['issues'] = p + r
+        fresh['confidence'] = 1.0 if not (p + r) else (0.5 if len(p + r) <= 2 else 0.2)
+    job.save()
+    await job.emit('bars_updated', {'bars': job.bars, 'pages': job.pages})
+    await job.emit('bar_status', {'n': bar_n, 'state': 'done', 'applied': applied})
+
+
 # ── Step 3: Pitch check ────────────────────────────────────────────────────────
 
 def _check_pitch_bar(bar: Dict, key_pcs: Optional[set]) -> List[str]:

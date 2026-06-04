@@ -27,7 +27,8 @@ from app.config import MIDI_OUTPUT_DIR
 from app.pipeline.job import (create_job, get_job, list_jobs, discover_jobs,
                               remove_job, Job, STEP_ORDER)
 from app.pipeline.steps import (run_step, run_approve, run_feedback, run_read,
-                                run_recompile_page, cancel_job)
+                                run_recompile_page, cancel_job, run_redo_bar,
+                                bar_crop_path)
 
 router = APIRouter()
 
@@ -346,6 +347,50 @@ async def delete_bar(job_id: str, bar_n: int):
     job.save()
     await job.emit('bars_updated', {'bars': job.bars, 'pages': job.pages})
     return {"ok": True, "bars": len(job.bars)}
+
+
+# ── Bar-by-bar workspace: source crop · human verify · AI redo ──────────────────
+
+@router.get("/jobs/{job_id}/bars/{bar_n}/crop")
+def get_bar_crop(job_id: str, bar_n: int):
+    """Source PDF crop for one bar — the mechanical reference for comparison."""
+    job = _require_job(job_id)
+    if job.get_bar(bar_n) is None:
+        raise HTTPException(404, f"Bar {bar_n} not found")
+    crop = bar_crop_path(job, bar_n)
+    if not crop or not Path(crop).exists():
+        raise HTTPException(404, "No source crop for this bar")
+    return FileResponse(str(crop), media_type='image/png')
+
+
+class VerifyReq(BaseModel):
+    verified: bool = True
+
+
+@router.post("/jobs/{job_id}/bars/{bar_n}/verify")
+async def verify_bar(job_id: str, bar_n: int, req: VerifyReq):
+    """Mark a bar human-verified (or un-verify it)."""
+    job = _require_job(job_id)
+    bar = job.get_bar(bar_n)
+    if bar is None:
+        raise HTTPException(404, f"Bar {bar_n} not found")
+    bar['verified'] = bool(req.verified)
+    job.save()
+    n = len(job.bars)
+    vc = sum(1 for b in job.bars if b.get('verified'))
+    await job.emit('bar_status', {'n': bar_n, 'state': 'verified' if req.verified else 'ai',
+                                  'verifiedCount': vc, 'total': n})
+    return {"ok": True, "verifiedCount": vc, "total": n}
+
+
+@router.post("/jobs/{job_id}/bars/{bar_n}/redo")
+async def redo_bar(job_id: str, bar_n: int):
+    """Re-transcribe a single bar with the AI from its source crop."""
+    job = _require_job(job_id)
+    if job.get_bar(bar_n) is None:
+        raise HTTPException(404, f"Bar {bar_n} not found")
+    asyncio.create_task(run_redo_bar(job, bar_n))
+    return {"ok": True, "bar": bar_n}
 
 
 # ── Page-level segment operations ───────────────────────────────────────────────

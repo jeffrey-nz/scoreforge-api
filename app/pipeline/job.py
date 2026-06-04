@@ -120,6 +120,7 @@ class Job:
             'approved': self.approved,
             'status': self.overall_status(),
             'bars': len(self.bars),
+            'verified': sum(1 for b in self.bars if b.get('verified')),
             'pages': len(self.pages),
             'pendingPages': [p['page'] for p in self.pages if p.get('status') == 'pending'],
             'steps': steps,
