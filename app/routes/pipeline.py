@@ -422,18 +422,20 @@ async def patch_job_meta(job_id: str, m: MetaPatch):
 
 
 class BarTransform(BaseModel):
-    op: str                      # 'octave' | 'clear'
-    track: str = 'both'          # 'melody' | 'bass' | 'both'
-    delta: int = 0               # octaves for 'octave'
+    op: str                          # 'octave' | 'clear' | 'timesig' | 'key'
+    track: str = 'both'              # 'melody' | 'bass' | 'both'
+    delta: int = 0                   # octaves for 'octave'
+    value: Optional[str] = None      # new meter/key for 'timesig'/'key'
 
 
 @router.post("/jobs/{job_id}/bars/{bar_n}/transform")
 async def transform_bar(job_id: str, bar_n: int, req: BarTransform):
-    """Apply a mechanical edit to one bar (octave shift / clear a staff)."""
+    """Apply a mechanical edit to one bar (octave shift, clear a staff, or set
+    a per-bar time-signature / key override)."""
     job = _require_job(job_id)
     if job.get_bar(bar_n) is None:
         raise HTTPException(404, f"Bar {bar_n} not found")
-    ok = await apply_bar_transform(job, bar_n, req.op, req.track, req.delta)
+    ok = await apply_bar_transform(job, bar_n, req.op, req.track, req.delta, req.value)
     return {"ok": ok}
 
 

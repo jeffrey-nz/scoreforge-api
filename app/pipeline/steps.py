@@ -501,13 +501,15 @@ async def run_redo_bar(job: Job, bar_n: int):
 # ── Mechanical (AI-free) bar fixes ──────────────────────────────────────────────
 
 def _recheck_bar(job: Job, bar: Dict):
-    """Recompute a bar's mechanical pitch/rhythm issues + confidence against the
-    job's CURRENT meta (key / time signature). Mutates the bar in place."""
+    """Recompute a bar's mechanical pitch/rhythm issues + confidence. A bar may
+    carry its own 'timeSig' / 'key' override (set from its per-bar settings);
+    otherwise the piece meta is used. Mutates the bar in place."""
     _ensure_core_on_path()
     import ai_transcribe as atr
-    key_pcs = atr._scale_pcs(job.meta.get('key', 'C major'))
+    key_pcs = atr._scale_pcs(bar.get('key') or job.meta.get('key', 'C major'))
     try:
-        num, den = map(int, str(job.meta.get('timeSig', '4/4')).split('/'))
+        ts = bar.get('timeSig') or job.meta.get('timeSig', '4/4')
+        num, den = map(int, str(ts).split('/'))
         bar_ticks = (num * 4 / den) * 16
     except Exception:
         bar_ticks = 4 * 16
@@ -542,26 +544,53 @@ def _shift_octave_str(s: str, delta: int) -> str:
 
 
 async def apply_bar_transform(job: Job, bar_n: int, op: str,
-                              track: str = 'both', delta: int = 0) -> bool:
-    """AI-free per-bar edit. ops: 'octave' (shift by delta), 'clear'."""
+                              track: str = 'both', delta: int = 0,
+                              value=None) -> bool:
+    """AI-free per-bar edit. ops:
+      'octave'  — shift a staff up/down by `delta` octaves
+      'clear'   — empty a staff
+      'timesig' — set this bar's time-signature override (`value`, '' clears)
+      'key'     — set this bar's key override (`value`, '' clears)"""
+    _ensure_core_on_path()
+    import ai_transcribe as atr
     bar = job.get_bar(bar_n)
     if bar is None:
         return False
-    tracks = ('melody', 'bass') if track in ('both', None, '') else (track,)
     changed = False
-    for tr in tracks:
-        if tr not in ('melody', 'bass'):
-            continue
-        cur = bar.get(tr, '')
-        if op == 'octave':
-            new = _shift_octave_str(cur, int(delta))
-        elif op == 'clear':
-            new = '(empty)'
+
+    if op in ('timesig', 'key'):
+        if op == 'timesig':
+            ts = atr._sane_timesig(value, None) if value else None
+            if ts != bar.get('timeSig'):
+                if ts:
+                    bar['timeSig'] = ts
+                else:
+                    bar.pop('timeSig', None)   # blank → revert to piece meta
+                changed = True
         else:
-            new = cur
-        if new != cur:
-            bar[tr] = new
-            changed = True
+            k = str(value).strip() if value else None
+            if k != bar.get('key'):
+                if k:
+                    bar['key'] = k
+                else:
+                    bar.pop('key', None)
+                changed = True
+    else:
+        tracks = ('melody', 'bass') if track in ('both', None, '') else (track,)
+        for tr in tracks:
+            if tr not in ('melody', 'bass'):
+                continue
+            cur = bar.get(tr, '')
+            if op == 'octave':
+                new = _shift_octave_str(cur, int(delta))
+            elif op == 'clear':
+                new = '(empty)'
+            else:
+                new = cur
+            if new != cur:
+                bar[tr] = new
+                changed = True
+
     if changed:
         bar['edited'] = True
         bar['verified'] = False
