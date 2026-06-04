@@ -593,7 +593,7 @@ Respond with JSON ONLY (no prose, no markdown fences):
   "bpm": 120,
   "bars": [
     {{"melody": "E5(8) D#5(8) E5(8) D#5(8) E5(8) B4(8)", "bass": "(empty)"}},
-    {{"melody": "...", "bass": "A2(16) E3(16) A3(8)"}}
+    {{"melody": "...", "bass": "A2(16) E3(16) A3(8)", "melody2": "", "bass2": ""}}
   ]
 }}
 
@@ -620,7 +620,18 @@ Notation rules:
     a rest like "R(8)".
   - The "melody" and "bass" in one bar entry are the SAME measure, vertically
     aligned by the barline — do not pair one bar's treble with another's bass.
-  - List notes left-to-right in time order; for a chord list its notes in order.
+  - VOICING: if a staff has TWO independent simultaneous voices (e.g. a held
+    melody note over a moving inner line, or stems pointing both up and down),
+    do NOT cram them into one impossible string. Put the upper / stems-up voice
+    in "melody" (treble) or "bass" (bass clef), and the lower / stems-down voice
+    in "melody2" / "bass2". EACH voice must independently sum to a full measure
+    (pad that voice with rests). Leave "melody2"/"bass2" as "" when the staff is
+    a single voice (the usual case) — e.g. Für Elise's opening run is one voice,
+    but a bar where the right hand sustains a note while playing faster notes
+    beneath needs melody + melody2.
+  - List notes left-to-right in time order; for a chord (notes struck together
+    in ONE voice) list its notes in order. Two different RHYTHMS at once = two
+    voices (use melody2/bass2), not a chord.
   - Use "(empty)" only for a staff that is silent for the WHOLE bar.
   - "key"/"timeSig"/"bpm" describe the piece; estimate bpm from the tempo
     marking. Only the FIRST page's values are used.
@@ -890,8 +901,11 @@ def _bars_to_tracks(all_bars, qL_per_bar, bpm):
         # lead-in to bar 2's downbeat.
         allow_short = (idx == 0 or idx == n - 1)
         align_end = (idx == 0)
-        for role in ('melody', 'bass'):
-            for midi, s, e in _bar_to_events(bar.get(role, ''), bar_start,
+        # Each staff may carry a second voice (melody2/bass2); both sound on the
+        # same track so playback/MIDI includes the inner voice.
+        for role, field in (('melody', 'melody'), ('melody', 'melody2'),
+                            ('bass', 'bass'), ('bass', 'bass2')):
+            for midi, s, e in _bar_to_events(bar.get(field, ''), bar_start,
                                              qL_per_bar, allow_short=allow_short,
                                              align_end=align_end):
                 tracks[role].append({'note': midi, 'start': to_sec(s),
@@ -1233,7 +1247,7 @@ def _normalize_bar_rests(bars):
     for idx, bar in enumerate(bars):
         if not isinstance(bar, dict):
             continue
-        for tr in ('melody', 'bass'):
+        for tr in ('melody', 'melody2', 'bass', 'bass2'):
             s = bar.get(tr, '')
             if idx == 0 and not _is_empty_staff(s):
                 stripped = _strip_leading_rests(s)

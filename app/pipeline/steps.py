@@ -579,11 +579,14 @@ async def apply_bar_transform(job: Job, bar_n: int, op: str,
                     bar.pop('key', None)
                 changed = True
     else:
-        tracks = ('melody', 'bass') if track in ('both', None, '') else (track,)
+        tracks = (('melody', 'melody2', 'bass', 'bass2')
+                  if track in ('both', None, '') else (track,))
         for tr in tracks:
-            if tr not in ('melody', 'bass'):
+            if tr not in ('melody', 'melody2', 'bass', 'bass2'):
                 continue
             cur = bar.get(tr, '')
+            if not cur:
+                continue   # skip absent inner voices
             if op == 'octave':
                 new = _shift_octave_str(cur, int(delta))
             elif op == 'clear':
@@ -643,7 +646,7 @@ def _check_pitch_bar(bar: Dict, key_pcs: Optional[set]) -> List[str]:
     import ai_transcribe as atr
 
     issues = []
-    for track in ('melody', 'bass'):
+    for track in ('melody', 'melody2', 'bass', 'bass2'):
         parsed = ac._parse_rewrite(bar.get(track, ''))
         notes = [m for m, _t in parsed if m is not None]
         if not notes:
@@ -750,7 +753,7 @@ async def _refine_bars(job: Job, flagged: Dict[int, List[str]], step_name: str) 
             if not (0 <= idx < len(bars)) or (idx + 1) not in chunk_bar_nums:
                 continue
             changed = False
-            for track in ('melody', 'bass'):
+            for track in ('melody', 'melody2', 'bass', 'bass2'):
                 val = r.get(track, '')
                 if val and str(val).strip() and str(val).strip() != bars[idx].get(track, ''):
                     bars[idx][track] = str(val).strip()
@@ -988,7 +991,7 @@ def _check_rhythm_bar(bar: Dict, bar_ticks: float, allow_short: bool = False) ->
     import ai_correct as ac
 
     issues = []
-    for track in ('melody', 'bass'):
+    for track in ('melody', 'melody2', 'bass', 'bass2'):
         parsed = ac._parse_rewrite(bar.get(track, ''))
         ticks = [t for _m, t in parsed]
         total = sum(ticks)

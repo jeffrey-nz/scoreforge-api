@@ -343,16 +343,19 @@ def get_bars(job_id: str):
 class BarPatch(BaseModel):
     melody: Optional[str] = None
     bass: Optional[str] = None
+    melody2: Optional[str] = None
+    bass2: Optional[str] = None
 
 
 @router.patch("/jobs/{job_id}/bars/{bar_n}")
 def patch_bar(job_id: str, bar_n: int, patch: BarPatch):
-    """Edit a single bar's note strings."""
+    """Edit a single bar's note strings (incl. inner voices melody2/bass2)."""
     job = _require_job(job_id)
     bar = job.get_bar(bar_n)
     if bar is None:
         raise HTTPException(404, f"Bar {bar_n} not found")
-    job.set_bar(bar_n, melody=patch.melody, bass=patch.bass)
+    job.set_bar(bar_n, melody=patch.melody, bass=patch.bass,
+                melody2=patch.melody2, bass2=patch.bass2)
     job.save()
     return job.get_bar(bar_n)
 
@@ -605,6 +608,7 @@ async def set_bars(job_id: str, req: SetBarsReq):
             continue
         norm.append({'n': b.get('n', i), 'page': b.get('page'),
                      'melody': b.get('melody', '') or '', 'bass': b.get('bass', '') or '',
+                     'melody2': b.get('melody2', '') or '', 'bass2': b.get('bass2', '') or '',
                      'issues': [], 'pitch_issues': [], 'rhythm_issues': [],
                      'confidence': b.get('confidence', 1.0),
                      'verified': bool(b.get('verified', False))})

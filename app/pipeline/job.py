@@ -296,7 +296,8 @@ class Job:
         idx = n - 1
         return self.bars[idx] if 0 <= idx < len(self.bars) else None
 
-    def set_bar(self, n: int, melody: Optional[str] = None, bass: Optional[str] = None):
+    def set_bar(self, n: int, melody: Optional[str] = None, bass: Optional[str] = None,
+                melody2: Optional[str] = None, bass2: Optional[str] = None):
         bar = self.get_bar(n)
         if bar is None:
             return
@@ -304,6 +305,10 @@ class Job:
             bar['melody'] = melody
         if bass is not None:
             bar['bass'] = bass
+        if melody2 is not None:
+            bar['melody2'] = melody2
+        if bass2 is not None:
+            bar['bass2'] = bass2
         bar['edited'] = True
 
     def renumber_bars(self):
