@@ -186,11 +186,35 @@ async def run_detect(job: Job):
     await job.emit('progress', {'step': 'detect', 'pct': 40,
                                 'msg': f'{len(pages)} page(s) rendered'})
 
-    # Detect systems + barlines per page
+    # ── Scope: only analyse the pages this run will actually transcribe ──────
+    # so a "first N bars" / page-range preview doesn't look like it's churning
+    # through the whole piece. All pages are still counted (cheap), but the
+    # detailed system/barline pass only runs on in-scope pages.
+    from pdf_to_midi import parse_page_spec
+    n_pages = len(pages)
+    max_bars = getattr(job, 'max_bars', None)
+    pages_spec = getattr(job, 'pages_spec', None)
+    if max_bars:
+        scope_pages = {1}
+        scope_label = f'first {max_bars} bar{"s" if max_bars != 1 else ""} (preview)'
+    elif pages_spec:
+        scope_pages = parse_page_spec(pages_spec, n_pages) or set(range(1, n_pages + 1))
+        scope_label = f'pages {pages_spec}'
+    else:
+        scope_pages = set(range(1, n_pages + 1))
+        scope_label = 'whole piece'
+
+    if scope_pages != set(range(1, n_pages + 1)):
+        step.log.append(f'scope: {scope_label} — analysing page(s) '
+                        f'{sorted(scope_pages)} of {n_pages}')
+        await job.emit('progress', {'step': 'detect', 'pct': 42,
+                                    'msg': f'Scope: {scope_label}'})
+
     total_systems = 0
     total_bars_est = 0
+    scoped = [(i, p) for i, p in enumerate(pages, 1) if i in scope_pages]
 
-    for i, page in enumerate(pages, 1):
+    for idx, (i, page) in enumerate(scoped, 1):
         strips = await loop.run_in_executor(
             None, atr._split_page_into_systems, page, pages_dir, i
         )
@@ -201,16 +225,18 @@ async def run_detect(job: Job):
         total_systems += len(strips)
         total_bars_est += page_bars
 
-        pct = 40 + int(55 * i / len(pages))
+        pct = 42 + int(56 * idx / max(len(scoped), 1))
         step.pct = pct
-        step.log.append(f'page {i}/{len(pages)}: {len(strips)} system(s), ~{page_bars} bars')
+        step.log.append(f'page {i}: {len(strips)} system(s), ~{page_bars} bars')
         await job.emit('progress', {
             'step': 'detect', 'pct': pct,
-            'msg': f'Page {i}/{len(pages)}: {len(strips)} system(s), ~{page_bars} bars',
+            'msg': f'Page {i}: {len(strips)} system(s), ~{page_bars} bars',
         })
 
     result = {
-        'pages': len(pages),
+        'pages': n_pages,
+        'scopePages': sorted(scope_pages),
+        'scopeLabel': scope_label,
         'systems': total_systems,
         'bars_estimate': total_bars_est,
     }
@@ -262,10 +288,15 @@ async def run_read(job: Job, pages_spec: Optional[str] = None,
     step.status = 'running'
     step.pct = 2
     job.log_step_start('read')
-    range_note = (f' (pages {pages_spec})' if pages_spec
-                  else f' (first {max_bars} bars)' if max_bars else '')
+    if max_bars:
+        scope = f'first {max_bars} bar{"s" if max_bars != 1 else ""} only'
+    elif pages_spec:
+        scope = f'pages {pages_spec}'
+    else:
+        scope = 'whole piece'
+    step.log.append(f'[scope] transcribing {scope} with {job.provider}')
     await job.emit('step', {'step': 'read', 'status': 'running', 'pct': 2,
-                            'msg': f'Starting AI transcription{range_note}…'})
+                            'msg': f'Transcribing {scope} · {job.provider}'})
 
     # ── Pre-flight: check AI bridge is reachable before launching subprocess ───
     # This gives a clear, immediate error rather than waiting for the subprocess

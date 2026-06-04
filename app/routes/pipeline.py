@@ -119,6 +119,50 @@ async def delete_job(job_id: str):
     return {"ok": True, "deleted": job_id}
 
 
+# ── Settings (review / edit) ────────────────────────────────────────────────────
+
+class JobSettings(BaseModel):
+    title: Optional[str] = None
+    composer: Optional[str] = None
+    bpm: Optional[int] = None
+    provider: Optional[str] = None
+    pages_spec: Optional[str] = None   # "" clears it
+    max_bars: Optional[int] = None     # 0 clears it
+
+
+@router.get("/jobs/{job_id}/settings")
+def get_settings(job_id: str):
+    """The current import settings, for the review/edit panel."""
+    job = _require_job(job_id)
+    return {
+        'title': job.title, 'composer': job.composer, 'bpm': job.bpm,
+        'provider': job.provider,
+        'pages_spec': job.pages_spec, 'max_bars': job.max_bars,
+        'scope': ('preview' if job.max_bars else 'pages' if job.pages_spec else 'whole'),
+    }
+
+
+@router.patch("/jobs/{job_id}/settings")
+async def patch_settings(job_id: str, s: JobSettings):
+    """Update import settings. Metadata (title/composer/bpm) takes effect on the
+    next save; provider + scope (pages/max_bars) apply to the next read/recompile."""
+    job = _require_job(job_id)
+    if s.title is not None:    job.title = s.title.strip()
+    if s.composer is not None: job.composer = s.composer.strip()
+    if s.bpm is not None:      job.bpm = s.bpm or None
+    if s.provider:             job.provider = s.provider
+    if s.pages_spec is not None:
+        job.pages_spec = s.pages_spec.strip() or None
+    if s.max_bars is not None:
+        job.max_bars = s.max_bars if s.max_bars > 0 else None
+    # Keep meta + catalog title/composer in sync for already-read pieces.
+    if job.meta:
+        if s.title is not None:    job.meta['title'] = job.title
+        if s.composer is not None: job.meta['composer'] = job.composer
+    job.save()
+    return await get_settings(job_id)
+
+
 # ── SSE stream ─────────────────────────────────────────────────────────────────
 
 @router.get("/jobs/{job_id}/stream")
