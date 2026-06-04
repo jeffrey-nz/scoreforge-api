@@ -625,7 +625,9 @@ Respond with JSON ONLY (no prose, no markdown fences):
 Notation: scientific pitch (C4 = middle C); duration tags w/h/q/8/16/32, a
 trailing dot = dotted; rests are R(dur) e.g. R(8). Each "rewrite" must be the
 COMPLETE bar and must sum to exactly one full measure of the time signature —
-use rests to fill held notes and silences. "ok" is true only if every bar
+use rests to fill held notes and silences. (A short pickup/anacrusis bar at
+the very start, or its complement at the very end, is the exception — leave it
+short; do NOT pad it with rests.) "ok" is true only if every bar
 already matches; then "corrections" must be empty. Write the JSON directly in
 your reply — do NOT open a Canvas or code panel. Output JSON only."""
 
@@ -665,8 +667,10 @@ Include one entry for EVERY labelled bar. Notation: scientific pitch
 w=whole h=half q=quarter 8=eighth 16=sixteenth 32=32nd, a trailing dot = dotted
 (q. 8.); rests are R(dur) e.g. R(8). Each "melody" and "bass" string must sum
 to exactly one full {timesig} measure — use rests to fill held notes and
-silences. If a staff is empty in a crop, use "(empty)". Write the JSON
-directly in your reply — do NOT open a Canvas or code panel. Output JSON only."""
+silences. (A short pickup/anacrusis bar at the very start of the piece is the
+exception — leave it short, don't pad it.) If a staff is empty in a crop, use
+"(empty)". Write the JSON directly in your reply — do NOT open a Canvas or code
+panel. Output JSON only."""
 
 
 def _audio_validate_prompt(title, composer, page_num, lo, hi, key, timesig, bpm):
@@ -719,7 +723,8 @@ def _parse_json(response):
 
 # ── Note assembly ─────────────────────────────────────────────────────────────
 
-def _bar_to_events(note_str, bar_start_qL, qL_per_bar):
+def _bar_to_events(note_str, bar_start_qL, qL_per_bar,
+                   allow_short=False, align_end=False):
     """Compact bar string ('C5(q) R(8) E5(8)') -> [(midi, start_qL, end_qL)].
 
     The LLM's note durations rarely add up to a full measure exactly. Rather
@@ -727,7 +732,12 @@ def _bar_to_events(note_str, bar_start_qL, qL_per_bar):
     ugly values), the residual is absorbed only at the END of the bar — the
     last note is extended or trimmed — keeping every other note's printed
     duration intact. Proportional scaling is the fallback for gross mismatch.
-    A clearly-short pickup bar is left alone.
+
+    allow_short: this bar may be a pickup/anacrusis (first bar) or its
+      complement (last bar) — keep its printed durations as-is, never stretch
+      a short bar to fill the measure.
+    align_end: place a short pickup's notes at the END of the bar so they lead
+      into the next downbeat (the musical position of an anacrusis).
     """
     if not note_str or str(note_str).strip().lower() in ('(empty)', 'empty', ''):
         return []
@@ -739,7 +749,13 @@ def _bar_to_events(note_str, bar_start_qL, qL_per_bar):
     if total <= 0:
         return []
     ratio = total / bar_ticks
-    if ratio < 0.5 or ratio > 2.0:
+    pickup = allow_short and ratio < 0.95
+    start_qL = bar_start_qL
+    if pickup:
+        # Keep printed durations; optionally right-align as a lead-in.
+        if align_end:
+            start_qL = bar_start_qL + max(0.0, qL_per_bar - total / DIV)
+    elif ratio < 0.5 or ratio > 2.0:
         # Gross mismatch — fall back to proportional scaling.
         scale = bar_ticks / total
         parsed = [(m, t * scale) for m, t in parsed]
@@ -759,7 +775,7 @@ def _bar_to_events(note_str, bar_start_qL, qL_per_bar):
                 else:
                     over -= t
                     parsed.pop()
-    out, pos = [], bar_start_qL
+    out, pos = [], start_qL
     bar_end = bar_start_qL + qL_per_bar
     for midi, ticks in parsed:
         dur = ticks / DIV
@@ -780,10 +796,17 @@ def _bars_to_tracks(all_bars, qL_per_bar, bpm):
     """Build {'melody':[...sec events], 'bass':[...], 'pad':[], 'drums':[]}."""
     tracks = {'melody': [], 'bass': [], 'pad': [], 'drums': []}
     to_sec = lambda qL: qL * 60.0 / bpm
+    n = len(all_bars)
     for idx, bar in enumerate(all_bars):
         bar_start = idx * qL_per_bar
+        # First/last bar may be a pickup; the first one right-aligns as a
+        # lead-in to bar 2's downbeat.
+        allow_short = (idx == 0 or idx == n - 1)
+        align_end = (idx == 0)
         for role in ('melody', 'bass'):
-            for midi, s, e in _bar_to_events(bar.get(role, ''), bar_start, qL_per_bar):
+            for midi, s, e in _bar_to_events(bar.get(role, ''), bar_start,
+                                             qL_per_bar, allow_short=allow_short,
+                                             align_end=align_end):
                 tracks[role].append({'note': midi, 'start': to_sec(s),
                                      'end': to_sec(e), 'vel': 72})
     return tracks

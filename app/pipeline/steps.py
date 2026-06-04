@@ -709,8 +709,12 @@ async def run_pitch(job: Job):
 
 # ── Step 4: Rhythm check ───────────────────────────────────────────────────────
 
-def _check_rhythm_bar(bar: Dict, bar_ticks: float) -> List[str]:
-    """Return rhythm issue strings for one bar."""
+def _check_rhythm_bar(bar: Dict, bar_ticks: float, allow_short: bool = False) -> List[str]:
+    """Return rhythm issue strings for one bar.
+
+    allow_short: the first and last bars of a piece may be a pickup/anacrusis
+    (and its complement) — a short bar there is musically correct, so only an
+    OVER-full bar is flagged."""
     _ensure_core_on_path()
     import ai_correct as ac
 
@@ -722,9 +726,10 @@ def _check_rhythm_bar(bar: Dict, bar_ticks: float) -> List[str]:
         if total <= 0:
             continue
         ratio = total / bar_ticks
-        if ratio < 0.72 or ratio > 1.35:
-            pct = int(ratio * 100)
-            issues.append(f'{track} fills {pct}% of bar (expected ~100%)')
+        if ratio > 1.35:
+            issues.append(f'{track} fills {int(ratio * 100)}% of bar (over a full measure)')
+        elif ratio < 0.72 and not allow_short:
+            issues.append(f'{track} fills {int(ratio * 100)}% of bar (expected ~100%)')
 
     return issues
 
@@ -749,10 +754,16 @@ async def run_rhythm(job: Job):
 
     flagged: Dict[int, List[str]] = {}
     all_issues: List[Dict] = []
+    n_bars = len(bars)
+
+    # The first bar may be a pickup (and the last its complement) — a short
+    # bar there is musically correct, so don't flag it for being short.
+    def _allow_short(bn):
+        return bn == 1 or bn == n_bars
 
     for bar in bars:
         bn = bar['n']
-        reasons = _check_rhythm_bar(bar, bar_ticks)
+        reasons = _check_rhythm_bar(bar, bar_ticks, allow_short=_allow_short(bn))
         if reasons:
             flagged[bn] = reasons
             for r in reasons:
@@ -780,7 +791,7 @@ async def run_rhythm(job: Job):
 
     remaining_issues: List[Dict] = []
     for bar in bars:
-        reasons = _check_rhythm_bar(bar, bar_ticks)
+        reasons = _check_rhythm_bar(bar, bar_ticks, allow_short=_allow_short(bar['n']))
         for r in reasons:
             remaining_issues.append({'bar': bar['n'], 'severity': 'warn', 'check': 'rhythm', 'msg': r})
         bar['rhythm_issues'] = reasons
