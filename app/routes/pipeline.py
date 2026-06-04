@@ -45,6 +45,8 @@ async def create_import_job(
     provider: str = Form("gemini"),
     pages: Optional[str] = Form(None),
     max_bars: Optional[int] = Form(None),
+    time_sig: Optional[str] = Form(None),
+    key: Optional[str] = Form(None),
 ):
     """Upload a PDF and create a new import job. Returns job_id immediately.
     `pages` (e.g. "1-2") or `max_bars` (e.g. 2) compiles only a subset now;
@@ -71,6 +73,8 @@ async def create_import_job(
     )
     job.pages_spec = (pages or '').strip() or None
     job.max_bars = max_bars if (max_bars and max_bars > 0) else None
+    job.time_sig = (time_sig or '').strip() or None
+    job.key = (key or '').strip() or None
     job.save()
 
     # Kick off the pipeline starting at 'detect' (auto-advances through all steps)
@@ -129,6 +133,8 @@ class JobSettings(BaseModel):
     provider: Optional[str] = None
     pages_spec: Optional[str] = None   # "" clears it
     max_bars: Optional[int] = None     # 0 clears it
+    time_sig: Optional[str] = None     # "" clears it
+    key: Optional[str] = None          # "" clears it
 
 
 @router.get("/jobs/{job_id}/settings")
@@ -139,6 +145,7 @@ def get_settings(job_id: str):
         'title': job.title, 'composer': job.composer, 'bpm': job.bpm,
         'provider': job.provider,
         'pages_spec': job.pages_spec, 'max_bars': job.max_bars,
+        'time_sig': job.time_sig, 'key': job.key,
         'scope': ('preview' if job.max_bars else 'pages' if job.pages_spec else 'whole'),
     }
 
@@ -156,6 +163,10 @@ async def patch_settings(job_id: str, s: JobSettings):
         job.pages_spec = s.pages_spec.strip() or None
     if s.max_bars is not None:
         job.max_bars = s.max_bars if s.max_bars > 0 else None
+    if s.time_sig is not None:
+        job.time_sig = s.time_sig.strip() or None
+    if s.key is not None:
+        job.key = s.key.strip() or None
     # Keep meta + catalog title/composer in sync for already-read pieces.
     if job.meta:
         if s.title is not None:    job.meta['title'] = job.title

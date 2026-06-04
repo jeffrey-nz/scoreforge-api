@@ -537,7 +537,7 @@ def _composite(left_png, right_png, out_png):
 # ── Prompts ───────────────────────────────────────────────────────────────────
 
 def _transcribe_prompt(title, composer, page_num, total_pages, bar_hint=None,
-                       strict=False):
+                       strict=False, time_sig=None, key=None):
     hint = ''
     if bar_hint and strict:
         hint = (f'\nIMPORTANT: a barline scan of this slice counted EXACTLY '
@@ -547,12 +547,36 @@ def _transcribe_prompt(title, composer, page_num, total_pages, bar_hint=None,
         hint = (f'\nA barline scan suggests this slice contains roughly '
                 f'{bar_hint} measure(s) — count the barlines yourself to '
                 f'confirm, and make sure your "bars" list has that many.\n')
+
+    # When the meter/key are known up front (user-supplied), state them as
+    # ground truth — a misread time signature is the single biggest source of
+    # error: it makes the model pad a pickup with rests and overfill bars.
+    if time_sig:
+        try:
+            _n, _d = map(int, str(time_sig).split('/'))
+            _beat = {1: 'whole', 2: 'half', 4: 'quarter', 8: 'eighth',
+                     16: 'sixteenth'}.get(_d, f'1/{_d}')
+            meter_line = (
+                f'\nTHE TIME SIGNATURE IS {time_sig} (given — do not change it). '
+                f'Every full bar holds exactly {_n} {_beat} note'
+                f'{"s" if _n != 1 else ""} of value, in BOTH the melody and the '
+                f'bass. Set "timeSig" to "{time_sig}" and make every full bar sum '
+                f'to exactly that.\n')
+        except Exception:
+            meter_line = f'\nThe time signature is {time_sig}. Use it.\n'
+    else:
+        meter_line = (
+            '\nREAD THE TIME SIGNATURE CAREFULLY from the start of the first '
+            'system (e.g. 3/8, 6/8, 2/4, 3/4, 4/4) — a wrong meter corrupts '
+            'every bar. Many pieces (e.g. Für Elise) are in 3/8, not 4/4.\n')
+    key_line = (f'The key is {key}.\n' if key else '')
+
     return f"""You are an expert music engraver transcribing printed sheet music.
 
 The attached image is a horizontal slice (one or two systems / lines) from
 page {page_num} of {total_pages} of "{title}" by {composer}. It may also be a
 title/header strip with no music.
-{hint}
+{hint}{meter_line}{key_line}
 "{title}" by {composer} is a well-known piece. Use your knowledge of the
 canonical score to resolve genuinely ambiguous or smudged notes — but always
 transcribe what is actually printed, not what you remember, when they differ.
@@ -579,10 +603,17 @@ Notation rules:
   - RESTS ARE REQUIRED. Write a rest as R(dur), e.g. R(q) R(8) R(16). When a
     note is held or a staff is silent for part of a bar, fill the remaining
     time with rests — do not just omit it.
-  - CRITICAL: every bar's melody string AND bass string must each add up to
-    exactly one full measure of the time signature. In {{}} 3/8 a bar totals
-    three eighths; in 4/4 it totals four quarters. Use rests to make it sum.
-    The only exception is a short pickup/anacrusis bar at the very start.
+  - CRITICAL: every FULL bar's melody string AND bass string must each add up
+    to exactly one measure of the time signature. In 3/8 a bar totals three
+    eighths (= six sixteenths); in 4/4 it totals four quarters. Use rests only
+    to fill genuine silences WITHIN the bar — never add notes or rests beyond
+    what is printed just to pad a bar. A bar that sums to MORE than one measure
+    (e.g. an extra half/whole note tacked on the end) is an error: transcribe
+    only what is printed.
+  - PICKUP / ANACRUSIS: if the piece opens with a short incomplete bar before
+    the first full barline (Für Elise opens with just two sixteenths, "E5 D#5"),
+    transcribe ONLY those few printed notes as a short first bar. Do NOT add
+    leading rests to pad it to a full measure, and do NOT merge it into bar 2.
   - The "melody" and "bass" in one bar entry are the SAME measure, vertically
     aligned by the barline — do not pair one bar's treble with another's bass.
   - List notes left-to-right in time order; for a chord list its notes in order.
@@ -1194,7 +1225,7 @@ def _apply_refinements(all_bars, refinements):
 
 def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
                    bpm_override=None, provider='gemini', only_pages=None,
-                   max_bars=None):
+                   max_bars=None, time_sig=None, key=None):
     """Batched AI transcription with render-and-validate. Returns (tracks, bpm, meta).
 
     only_pages: optional set/iterable of 1-based page numbers to TRANSCRIBE.
@@ -1230,8 +1261,17 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
         raise RuntimeError('PDF has no pages')
     print(f'[transcribe] {len(page_pngs)} page(s) rendered; provider {provider}')
 
-    meta = {'key': 'C', 'timeSig': '4/4', 'bpm': None, 'title': title,
-            'composer': composer, 'importedFrom': pdf_path.name}
+    # User-supplied meter/key are authoritative ground truth — seed meta with
+    # them and lock so the AI's own (often wrong) reading can't override.
+    time_sig = _sane_timesig(time_sig, None) if time_sig else None
+    key = (str(key).strip() or None) if key else None
+    locked = set()
+    meta = {'key': key or 'C', 'timeSig': time_sig or '4/4', 'bpm': None,
+            'title': title, 'composer': composer, 'importedFrom': pdf_path.name}
+    if time_sig:
+        locked.add('timeSig')
+    if key:
+        locked.add('key')
     all_bars = []
     page_manifest = []
     audio_ok = True  # set False if the bridge has no /api/audio-ask route
@@ -1314,7 +1354,8 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
                 try:
                     data = _parse_json(ai_correct._bridge_image_ask(
                         strip, _transcribe_prompt(title, composer, i,
-                                                  len(page_pngs), bar_hint),
+                                                  len(page_pngs), bar_hint,
+                                                  time_sig=time_sig, key=key),
                         provider=provider))
                 except Exception as e:
                     _log(f'page {i} system {j} failed after {time.time()-t0:.0f}s: {e}')
@@ -1329,7 +1370,8 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
                     try:
                         retry = _parse_json(ai_correct._bridge_image_ask(
                             strip, _transcribe_prompt(title, composer, i,
-                                     len(page_pngs), bar_hint, strict=True),
+                                     len(page_pngs), bar_hint, strict=True,
+                                     time_sig=time_sig, key=key),
                             provider=provider))
                         rn = len([b for b in (retry.get('bars') or [])
                                   if isinstance(b, dict)])
@@ -1346,9 +1388,13 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
                 _log(f'page {i} system {j}: {n} bar(s) in {time.time()-t0:.0f}s')
             if not got_meta and (data.get('key') or data.get('timeSig')
                                  or data.get('bpm')):
-                meta['key'] = data.get('key') or meta['key']
-                meta['timeSig'] = _sane_timesig(data.get('timeSig'),
-                                                meta['timeSig'])
+                # Locked fields are user-supplied ground truth — never let the
+                # AI's reading overwrite them.
+                if 'key' not in locked:
+                    meta['key'] = data.get('key') or meta['key']
+                if 'timeSig' not in locked:
+                    meta['timeSig'] = _sane_timesig(data.get('timeSig'),
+                                                    meta['timeSig'])
                 try:
                     meta['bpm'] = int(round(float(data.get('bpm'))))
                 except (TypeError, ValueError):
@@ -1578,7 +1624,9 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
     # note distribution POORLY and a detected key fits clearly better. This
     # avoids being fooled by chromatic neighbour tones (e.g. Fur Elise's D#,
     # which makes a naive scale-fit favour E minor over the true A minor).
-    detected = _detect_key(all_bars, qL_per_bar)
+    detected = _detect_key(all_bars, qL_per_bar) if 'key' not in locked else None
+    if 'key' in locked:
+        _log(f'key locked to user-supplied "{meta["key"]}"')
     if detected:
         det_key, det_frac, hist = detected
         ai_fit = _key_fit(hist, meta.get('key'))

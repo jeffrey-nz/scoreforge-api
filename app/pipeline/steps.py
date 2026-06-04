@@ -353,6 +353,10 @@ async def run_read(job: Job, pages_spec: Optional[str] = None,
     if job.bpm:      args += ['--bpm', str(job.bpm)]
     if pages_spec:   args += ['--pages', str(pages_spec)]
     if max_bars:     args += ['--max-bars', str(max_bars)]
+    # User-supplied meter/key are ground truth — pass them so the AI can't
+    # misread them (a wrong meter is what padded pickups and overfilled bars).
+    if getattr(job, 'time_sig', None): args += ['--time-sig', str(job.time_sig)]
+    if getattr(job, 'key', None):      args += ['--key', str(job.key)]
 
     job.cancelled = False
     proc = await asyncio.create_subprocess_exec(

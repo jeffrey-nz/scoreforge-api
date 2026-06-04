@@ -60,6 +60,8 @@ class Job:
         self.approved = False
         self.pages_spec: Optional[str] = None  # initial page range for the auto-run read
         self.max_bars: Optional[int] = None    # initial bar cap (preview) for the auto-run read
+        self.time_sig: Optional[str] = None    # user-supplied meter (ground truth, locks the AI)
+        self.key: Optional[str] = None         # user-supplied key (ground truth, locks the AI)
 
         self.steps: Dict[str, StepState] = {
             s: StepState() for s in STEP_ORDER + ['review']
@@ -100,6 +102,8 @@ class Job:
             'provider': self.provider,
             'pages_spec': self.pages_spec,
             'max_bars': self.max_bars,
+            'time_sig': self.time_sig,
+            'key': self.key,
             'created': self.created,
             'approved': self.approved,
             'steps': {k: v.to_dict() for k, v in self.steps.items()},
@@ -160,6 +164,8 @@ class Job:
         job.provider = d.get('provider', 'gemini')
         job.pages_spec = d.get('pages_spec')
         job.max_bars = d.get('max_bars')
+        job.time_sig = d.get('time_sig')
+        job.key = d.get('key')
         job.created = d.get('created', time.time())
         job.approved = d.get('approved', False)
         job.bars = d.get('bars', [])
