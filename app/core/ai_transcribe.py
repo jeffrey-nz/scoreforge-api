@@ -1159,11 +1159,18 @@ def _apply_refinements(all_bars, refinements):
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
-                   bpm_override=None, provider='gemini'):
-    """Batched AI transcription with render-and-validate. Returns (tracks, bpm, meta)."""
+                   bpm_override=None, provider='gemini', only_pages=None):
+    """Batched AI transcription with render-and-validate. Returns (tracks, bpm, meta).
+
+    only_pages: optional set/iterable of 1-based page numbers to TRANSCRIBE.
+      Pages already cached (page_NN.done.json) are always loaded so partial
+      compiles accumulate; pages outside the set that aren't cached are left
+      'pending' (no bars) so the user can compile them later. None = all pages.
+    """
     pdf_path = Path(pdf_path)
     out_dir = Path(out_dir)
     pages_dir = out_dir / '_pages'
+    only_pages = set(only_pages) if only_pages else None
 
     if not ai_correct._bridge_ping():
         raise RuntimeError(
@@ -1214,11 +1221,21 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
                 lo = len(all_bars) + 1
                 all_bars.extend(cbars)
                 hi = len(all_bars)
-                page_manifest.append({'file': png.name, 'startBar': lo, 'endBar': hi})
+                page_manifest.append({'file': png.name, 'page': i,
+                                      'startBar': lo, 'endBar': hi, 'status': 'done'})
                 _log(f'page {i}/{len(page_pngs)}: resumed from cache ({len(cbars)} bars)')
                 continue
             except Exception:
                 _log(f'page {i}: cached result unreadable -- re-transcribing')
+
+        # ── Page-range filter ───────────────────────────────────────────────
+        # When a subset was requested, leave out-of-range uncached pages
+        # 'pending' so they can be compiled in a later run.
+        if only_pages is not None and i not in only_pages:
+            page_manifest.append({'file': png.name, 'page': i,
+                                  'startBar': 0, 'endBar': 0, 'status': 'pending'})
+            _log(f'page {i}/{len(page_pngs)}: skipped (not in requested range)')
+            continue
 
         # ── 1. Transcribe this page system-by-system (small fast batches) ────
         _log(f'=== page {i}/{len(page_pngs)} ===')
@@ -1296,7 +1313,8 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
                     for k, cp in enumerate(crops):
                         bar_crop[gstart + k] = cp
         lo, hi = page_start, len(all_bars)
-        page_manifest.append({'file': png.name, 'startBar': lo, 'endBar': hi})
+        page_manifest.append({'file': png.name, 'page': i, 'startBar': lo,
+                              'endBar': hi, 'status': 'done' if hi >= lo else 'empty'})
         _log(f'page {i}: {hi - lo + 1 if hi >= lo else 0} bar(s) total '
              f'(bars {lo}-{hi})')
         if hi < lo:

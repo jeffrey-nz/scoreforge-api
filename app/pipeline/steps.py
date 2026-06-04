@@ -42,7 +42,8 @@ def _ensure_core_on_path():
 
 
 def _load_bars_from_cache(job: Job) -> List[Dict]:
-    """Reconstruct bars list from page_NN.done.json caches written by ai_transcribe."""
+    """Reconstruct the bars list from page_NN.done.json caches, in page order.
+    Each bar is tagged with its source page so per-page edits/deletes work."""
     pages_dir = job.out_dir / '_pages'
     pages_json = pages_dir / 'pages.json'
     if not pages_json.exists():
@@ -53,20 +54,59 @@ def _load_bars_from_cache(job: Job) -> List[Dict]:
         return []
 
     all_bars: List[Dict] = []
-    for pg in manifest.get('pages', []):
-        # page file name is like 'page_01.png' → page number 1
-        m = re.search(r'page_(\d+)', pg.get('file', ''))
-        if not m:
+    # Honour the manifest's page order (handles partial/out-of-order compiles).
+    entries = sorted(manifest.get('pages', []),
+                     key=lambda p: p.get('page')
+                     or int(re.search(r'page_(\d+)', p.get('file', '0')).group(1)))
+    for pg in entries:
+        pnum = pg.get('page')
+        if pnum is None:
+            m = re.search(r'page_(\d+)', pg.get('file', ''))
+            pnum = int(m.group(1)) if m else None
+        if pnum is None:
             continue
-        pnum = int(m.group(1))
         done = pages_dir / f'page_{pnum:02d}.done.json'
         if done.exists():
             try:
                 page_bars = json.loads(done.read_text(encoding='utf-8')).get('bars', [])
-                all_bars.extend(b for b in page_bars if isinstance(b, dict))
+                for b in page_bars:
+                    if isinstance(b, dict):
+                        b = dict(b)
+                        b['page'] = pnum
+                        all_bars.append(b)
             except Exception:
                 pass
     return all_bars
+
+
+def _load_pages_model(job: Job) -> List[Dict]:
+    """Build the page→bar model from pages.json + the loaded bars."""
+    pages_dir = job.out_dir / '_pages'
+    pages_json = pages_dir / 'pages.json'
+    pages: List[Dict] = []
+    if not pages_json.exists():
+        return pages
+    try:
+        manifest = json.loads(pages_json.read_text(encoding='utf-8'))
+    except Exception:
+        return pages
+    for pg in manifest.get('pages', []):
+        pnum = pg.get('page')
+        if pnum is None:
+            m = re.search(r'page_(\d+)', pg.get('file', ''))
+            pnum = int(m.group(1)) if m else None
+        if pnum is None:
+            continue
+        done = (pages_dir / f'page_{pnum:02d}.done.json').exists()
+        pages.append({
+            'page': pnum,
+            'status': pg.get('status', 'done' if done else 'pending'),
+            'startBar': pg.get('startBar', 0),
+            'endBar': pg.get('endBar', 0),
+            'bars': max(0, pg.get('endBar', 0) - pg.get('startBar', 0) + 1)
+                    if pg.get('endBar', 0) >= pg.get('startBar', 1) else 0,
+        })
+    return sorted(pages, key=lambda p: p['page'])
 
 
 def _load_meta_from_cache(job: Job) -> Dict:
@@ -185,29 +225,43 @@ async def run_detect(job: Job):
 # ── Step 2: Read (AI transcription) ────────────────────────────────────────────
 
 def _parse_read_pct(line: str, page_current: int, page_total: int) -> Optional[int]:
-    """Estimate 0-98% progress from a transcription log line."""
-    if re.search(r'page\s+\d+/\d+.*system', line, re.I):
-        # Starting a system — rough per-page progress
-        frac = (page_current - 1) / max(page_total, 1)
-        return max(5, min(90, int(5 + frac * 80)))
+    """Estimate 5-98% progress from a transcription log line.
+
+    Smoothed to system granularity: a line like 'page 1/3 system 3/6'
+    advances the bar within the page, so it never sits frozen during the
+    minutes a single page of systems takes.
+    """
+    pages = max(page_total, 1)
+
+    # "page X system A/B" — interpolate within the current page by system.
+    m = re.search(r'system\s+(\d+)\s*/\s*(\d+)', line, re.I)
+    if m and re.search(r'page', line, re.I):
+        sys_i, sys_n = int(m.group(1)), max(int(m.group(2)), 1)
+        page_frac = ((page_current - 1) + (sys_i - 1) / sys_n) / pages
+        return max(5, min(90, int(5 + page_frac * 80)))
+
     if 'refine' in line.lower():
-        frac = (page_current - 0.3) / max(page_total, 1)
+        frac = (page_current - 0.3) / pages
         return max(5, min(92, int(5 + frac * 85)))
     if 'holistic' in line.lower():
-        frac = (page_current - 0.1) / max(page_total, 1)
+        frac = (page_current - 0.1) / pages
         return max(5, min(94, int(5 + frac * 88)))
     if 'done:' in line and 'bars' in line:
         return 97
     return None
 
 
-async def run_read(job: Job):
+async def run_read(job: Job, pages_spec: Optional[str] = None):
     step = job.steps['read']
+    # On the initial auto-run, fall back to the page range chosen at upload.
+    if pages_spec is None:
+        pages_spec = getattr(job, 'pages_spec', None)
     step.status = 'running'
     step.pct = 2
     job.log_step_start('read')
+    range_note = f' (pages {pages_spec})' if pages_spec else ''
     await job.emit('step', {'step': 'read', 'status': 'running', 'pct': 2,
-                            'msg': 'Starting AI transcription…'})
+                            'msg': f'Starting AI transcription{range_note}…'})
 
     # ── Pre-flight: check AI bridge is reachable before launching subprocess ───
     # This gives a clear, immediate error rather than waiting for the subprocess
@@ -248,6 +302,7 @@ async def run_read(job: Job):
     if job.title:    args += ['--title', job.title]
     if job.composer: args += ['--composer', job.composer]
     if job.bpm:      args += ['--bpm', str(job.bpm)]
+    if pages_spec:   args += ['--pages', str(pages_spec)]
 
     proc = await asyncio.create_subprocess_exec(
         *args,
@@ -290,18 +345,23 @@ async def run_read(job: Job):
         await job.emit('step', {'step': 'read', 'status': 'error', 'pct': step.pct})
         return
 
-    # Load results from cache files
+    # Load results from cache files (page-tagged) + rebuild the page model
     bars = _load_bars_from_cache(job)
     meta = _load_meta_from_cache(job)
-    job.bars = [{'n': i+1, 'melody': b.get('melody',''), 'bass': b.get('bass',''),
+    job.bars = [{'n': i+1, 'page': b.get('page'),
+                 'melody': b.get('melody',''), 'bass': b.get('bass',''),
                  'issues': [], 'confidence': 1.0} for i, b in enumerate(bars)]
+    job.pages = _load_pages_model(job)
     job.meta = meta
 
+    pending = [p['page'] for p in job.pages if p.get('status') == 'pending']
     result = {
         'bars': len(job.bars),
         'key': meta.get('key', '?'),
         'timeSig': meta.get('timeSig', '?'),
         'bpm': meta.get('bpm'),
+        'pages': len(job.pages),
+        'pendingPages': pending,
     }
     step.result = result
     step.status = 'done'
@@ -309,6 +369,27 @@ async def run_read(job: Job):
     job.log_step_end('read')
     job.save()
     await job.emit('step', {'step': 'read', 'status': 'done', 'pct': 100, 'result': result})
+    await job.emit('bars_updated', {'bars': job.bars, 'pages': job.pages})
+
+
+# ── Recompile a single page ────────────────────────────────────────────────────
+
+async def run_recompile_page(job: Job, page: int):
+    """Delete a page's cache + bars, then re-transcribe just that page."""
+    # Drop the cached transcription so ai_transcribe re-reads it fresh.
+    pages_dir = job.out_dir / '_pages'
+    for f in [pages_dir / f'page_{page:02d}.done.json',
+              *pages_dir.glob(f'sys_{page:02d}_*.json')]:
+        try: f.unlink()
+        except Exception: pass
+    job.delete_page(page)
+    job.save()
+    await job.emit('bars_updated', {'bars': job.bars, 'pages': job.pages})
+    # Re-run read scoped to just this page (resume-aware: other pages stay cached)
+    await run_read(job, pages_spec=str(page))
+    # Re-validate the updated bars downstream
+    if job.steps['read'].status == 'done':
+        await run_step(job, 'pitch')
 
 
 # ── Step 3: Pitch check ────────────────────────────────────────────────────────

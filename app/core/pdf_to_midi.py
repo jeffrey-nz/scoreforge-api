@@ -387,11 +387,15 @@ def score_to_tracks(score, bpm_override=None):
 # ── Main conversion ───────────────────────────────────────────────────────────
 
 def convert(input_path, piece_id, title=None, composer=None, out_base=None,
-            bpm_override=None, time_sig_override=None, provider='gemini'):
+            bpm_override=None, time_sig_override=None, provider='gemini',
+            only_pages=None):
     """Full pipeline: input -> 4 MIDI files + catalog.json.
 
     PDFs are transcribed by AI vision (ai_transcribe.py); MusicXML/MIDI inputs
     are converted directly with music21. Returns the catalog dict.
+
+    only_pages: optional iterable of 1-based page numbers to transcribe (PDF
+      only); pages outside it are left pending for a later partial compile.
     """
     input_path = Path(input_path)
     out_base   = Path(out_base) if out_base else DEFAULT_OUT
@@ -413,7 +417,8 @@ def convert(input_path, piece_id, title=None, composer=None, out_base=None,
                 input_path, out_dir, piece_id,
                 title or piece_id.replace('_', ' ').title(),
                 composer or '(unknown composer)',
-                bpm_override=bpm_override, provider=provider)
+                bpm_override=bpm_override, provider=provider,
+                only_pages=only_pages)
         except Exception as e:
             print(f'[convert] AI transcription failed: {e}', file=sys.stderr)
             sys.exit(2)
@@ -497,6 +502,31 @@ def convert(input_path, piece_id, title=None, composer=None, out_base=None,
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
+def parse_page_spec(spec, max_page=None):
+    """Parse a page spec string into a sorted set of 1-based page numbers.
+
+    Accepts comma-separated singles and ranges: "1-2", "1,3,5", "2-" (open
+    upper bound needs max_page). Returns None for an empty/None spec (= all).
+    """
+    if not spec or not str(spec).strip():
+        return None
+    pages = set()
+    for part in str(spec).split(','):
+        part = part.strip()
+        if not part:
+            continue
+        if '-' in part:
+            a, _, b = part.partition('-')
+            lo = int(a) if a.strip() else 1
+            hi = int(b) if b.strip() else (max_page or lo)
+            pages.update(range(lo, hi + 1))
+        else:
+            pages.add(int(part))
+    if max_page:
+        pages = {p for p in pages if 1 <= p <= max_page}
+    return pages or None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Convert sheet music PDF/MusicXML/MIDI to 4-track showcase MIDI')
@@ -517,6 +547,10 @@ def main():
     parser.add_argument('--ai-provider', default='gemini',
                         help='AI provider via browser-ai-bridge for the AI '
                              'stages (default gemini; also chatgpt|copilot|deepseek|grok)')
+    parser.add_argument('--pages',
+                        help='PDF only: page range/list to transcribe, e.g. '
+                             '"1-2", "1,3,5", "2-". Others are left pending for '
+                             'a later partial compile. Default: all pages.')
     args = parser.parse_args()
 
     inp = Path(args.input)
@@ -536,6 +570,7 @@ def main():
         bpm_override      = args.bpm,
         time_sig_override = args.time_sig,
         provider          = args.ai_provider,
+        only_pages        = parse_page_spec(args.pages),
     )
 
     print('\n-- Catalog entry --')

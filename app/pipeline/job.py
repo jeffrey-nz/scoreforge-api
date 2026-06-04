@@ -58,11 +58,13 @@ class Job:
         self.provider = provider
         self.created = time.time()
         self.approved = False
+        self.pages_spec: Optional[str] = None  # initial page range for the auto-run read
 
         self.steps: Dict[str, StepState] = {
             s: StepState() for s in STEP_ORDER + ['review']
         }
-        self.bars: List[Dict] = []   # [{n, melody, bass, issues:[]}]
+        self.bars: List[Dict] = []   # [{n, page, melody, bass, issues:[]}]
+        self.pages: List[Dict] = []  # [{page, status, startBar, endBar, bars}]
         self.meta: Dict = {}         # {key, timeSig, bpm, title, composer}
 
         self._queues: List[asyncio.Queue] = []
@@ -96,6 +98,7 @@ class Job:
             'approved': self.approved,
             'steps': {k: v.to_dict() for k, v in self.steps.items()},
             'bars': self.bars,
+            'pages': self.pages,
             'meta': self.meta,
         }
 
@@ -197,6 +200,49 @@ class Job:
         if bass is not None:
             bar['bass'] = bass
         bar['edited'] = True
+
+    def renumber_bars(self):
+        """Re-assign contiguous 1-based 'n' after inserts/deletes, then refresh
+        the page→bar map so per-page ranges stay accurate."""
+        for i, bar in enumerate(self.bars, 1):
+            bar['n'] = i
+        self._rebuild_page_ranges()
+
+    def delete_bar(self, n: int) -> bool:
+        idx = n - 1
+        if not (0 <= idx < len(self.bars)):
+            return False
+        self.bars.pop(idx)
+        self.renumber_bars()
+        return True
+
+    def delete_page(self, page: int) -> int:
+        """Drop every bar belonging to a page. Returns the count removed.
+        The page stays in the model marked 'pending' so it can be recompiled."""
+        before = len(self.bars)
+        self.bars = [b for b in self.bars if b.get('page') != page]
+        removed = before - len(self.bars)
+        for p in self.pages:
+            if p.get('page') == page:
+                p['status'] = 'pending'
+                p['bars'] = 0
+        self.renumber_bars()
+        return removed
+
+    def _rebuild_page_ranges(self):
+        """Recompute each page's startBar/endBar/bars from the current bars."""
+        counts: Dict[int, List[int]] = {}
+        for bar in self.bars:
+            counts.setdefault(bar.get('page', 0), []).append(bar['n'])
+        for p in self.pages:
+            ns = counts.get(p.get('page'), [])
+            if ns:
+                p['startBar'], p['endBar'], p['bars'] = min(ns), max(ns), len(ns)
+                if p.get('status') == 'pending':
+                    p['status'] = 'done'
+            else:
+                p['startBar'] = p['endBar'] = 0
+                p['bars'] = 0
 
 
 # ── Global store ──────────────────────────────────────────────────────────────

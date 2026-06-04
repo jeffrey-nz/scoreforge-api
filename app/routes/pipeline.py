@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from app.config import MIDI_OUTPUT_DIR
 from app.pipeline.job import create_job, get_job, list_jobs, Job, STEP_ORDER
-from app.pipeline.steps import run_step, run_approve, run_feedback
+from app.pipeline.steps import run_step, run_approve, run_feedback, run_read, run_recompile_page
 
 router = APIRouter()
 
@@ -39,8 +39,11 @@ async def create_import_job(
     composer: str = Form(""),
     bpm: Optional[int] = Form(None),
     provider: str = Form("gemini"),
+    pages: Optional[str] = Form(None),
 ):
-    """Upload a PDF and create a new import job. Returns job_id immediately."""
+    """Upload a PDF and create a new import job. Returns job_id immediately.
+    `pages` (e.g. "1-2") compiles only a subset now; the rest can be
+    compiled later from the review screen."""
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(400, "Only PDF files accepted")
 
@@ -60,6 +63,7 @@ async def create_import_job(
         bpm=bpm,
         provider=provider,
     )
+    job.pages_spec = (pages or '').strip() or None
     job.save()
 
     # Kick off the pipeline starting at 'detect' (auto-advances through all steps)
@@ -135,9 +139,15 @@ def _sse(event_type: str, data) -> str:
 
 # ── Step control ───────────────────────────────────────────────────────────────
 
+class StepRunRequest(BaseModel):
+    pages: Optional[str] = None   # e.g. "1-2", "3,5" — read step only
+
+
 @router.post("/jobs/{job_id}/steps/{step_name}/run")
-async def run_job_step(job_id: str, step_name: str):
-    """Start or rerun a specific pipeline step."""
+async def run_job_step(job_id: str, step_name: str, req: Optional[StepRunRequest] = None):
+    """Start or rerun a step. For 'read', an optional {pages} compiles only a
+    subset (others left pending), and is resume-aware: already-compiled pages
+    are reused, so you can compile more of the PDF over several runs."""
     job = _require_job(job_id)
     if step_name not in STEP_ORDER:
         raise HTTPException(400, f"Unknown step '{step_name}'. Valid: {STEP_ORDER}")
@@ -154,8 +164,16 @@ async def run_job_step(job_id: str, step_name: str):
         job.steps[s].result = None
         job.steps[s].issues = []
 
-    asyncio.create_task(run_step(job, step_name))
-    return {"ok": True, "step": step_name}
+    pages = (req.pages if req else None)
+    if step_name == 'read' and pages:
+        async def _read_then_advance():
+            await run_read(job, pages_spec=pages)
+            if job.steps['read'].status == 'done':
+                await run_step(job, 'pitch')
+        asyncio.create_task(_read_then_advance())
+    else:
+        asyncio.create_task(run_step(job, step_name))
+    return {"ok": True, "step": step_name, "pages": pages}
 
 
 # ── Approve ────────────────────────────────────────────────────────────────────
@@ -232,6 +250,46 @@ def patch_bar(job_id: str, bar_n: int, patch: BarPatch):
     job.set_bar(bar_n, melody=patch.melody, bass=patch.bass)
     job.save()
     return job.get_bar(bar_n)
+
+
+@router.delete("/jobs/{job_id}/bars/{bar_n}")
+async def delete_bar(job_id: str, bar_n: int):
+    """Delete a single bar; remaining bars renumber to stay contiguous."""
+    job = _require_job(job_id)
+    if not job.delete_bar(bar_n):
+        raise HTTPException(404, f"Bar {bar_n} not found")
+    job.save()
+    await job.emit('bars_updated', {'bars': job.bars, 'pages': job.pages})
+    return {"ok": True, "bars": len(job.bars)}
+
+
+# ── Page-level segment operations ───────────────────────────────────────────────
+
+@router.get("/jobs/{job_id}/pages")
+def get_pages(job_id: str):
+    """The page→bar map: which pages are compiled, pending, and their bar ranges."""
+    return _require_job(job_id).pages
+
+
+@router.delete("/jobs/{job_id}/pages/{page}")
+async def delete_page(job_id: str, page: int):
+    """Drop all bars from a page (it stays 'pending' so you can recompile it)."""
+    job = _require_job(job_id)
+    removed = job.delete_page(page)
+    job.save()
+    await job.emit('bars_updated', {'bars': job.bars, 'pages': job.pages})
+    return {"ok": True, "removed": removed, "pages": job.pages}
+
+
+@router.post("/jobs/{job_id}/pages/{page}/recompile")
+async def recompile_page(job_id: str, page: int):
+    """Re-transcribe a single page from scratch (clears its cache + bars),
+    then re-validates downstream. Other pages are untouched."""
+    job = _require_job(job_id)
+    if job.steps['read'].status == 'running':
+        raise HTTPException(409, "Read step is already running")
+    asyncio.create_task(run_recompile_page(job, page))
+    return {"ok": True, "page": page}
 
 
 # ── Page image ─────────────────────────────────────────────────────────────────
