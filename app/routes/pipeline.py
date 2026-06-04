@@ -24,6 +24,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 
 from app.config import MIDI_OUTPUT_DIR
+from app.control import hub
 from app.pipeline.job import (create_job, get_job, list_jobs, discover_jobs,
                               remove_job, Job, STEP_ORDER)
 from app.pipeline.steps import (run_step, run_approve, run_feedback, run_read,
@@ -47,6 +48,7 @@ async def create_import_job(
     max_bars: Optional[int] = Form(None),
     time_sig: Optional[str] = Form(None),
     key: Optional[str] = Form(None),
+    engine: Optional[str] = Form(None),
 ):
     """Upload a PDF and create a new import job. Returns job_id immediately.
     `pages` (e.g. "1-2") or `max_bars` (e.g. 2) compiles only a subset now;
@@ -75,6 +77,7 @@ async def create_import_job(
     job.max_bars = max_bars if (max_bars and max_bars > 0) else None
     job.time_sig = (time_sig or '').strip() or None
     job.key = (key or '').strip() or None
+    job.engine = (engine or '').strip().lower() or 'bridge'
     job.save()
 
     # Kick off the pipeline starting at 'detect' (auto-advances through all steps)
@@ -135,6 +138,7 @@ class JobSettings(BaseModel):
     max_bars: Optional[int] = None     # 0 clears it
     time_sig: Optional[str] = None     # "" clears it
     key: Optional[str] = None          # "" clears it
+    engine: Optional[str] = None       # 'bridge' | 'claude'
 
 
 @router.get("/jobs/{job_id}/settings")
@@ -146,6 +150,7 @@ def get_settings(job_id: str):
         'provider': job.provider,
         'pages_spec': job.pages_spec, 'max_bars': job.max_bars,
         'time_sig': job.time_sig, 'key': job.key,
+        'engine': getattr(job, 'engine', 'bridge'),
         'scope': ('preview' if job.max_bars else 'pages' if job.pages_spec else 'whole'),
     }
 
@@ -167,6 +172,8 @@ async def patch_settings(job_id: str, s: JobSettings):
         job.time_sig = s.time_sig.strip() or None
     if s.key is not None:
         job.key = s.key.strip() or None
+    if s.engine is not None:
+        job.engine = s.engine.strip().lower() or 'bridge'
     # Keep meta + catalog title/composer in sync for already-read pieces.
     if job.meta:
         if s.title is not None:    job.meta['title'] = job.title
@@ -437,6 +444,186 @@ async def transform_bar(job_id: str, bar_n: int, req: BarTransform):
         raise HTTPException(404, f"Bar {bar_n} not found")
     ok = await apply_bar_transform(job, bar_n, req.op, req.track, req.delta, req.value)
     return {"ok": ok}
+
+
+# ── Claude Code transcription queue ─────────────────────────────────────────────
+
+@router.get("/claude-queue")
+def claude_queue_status():
+    """Pending transcription requests waiting for Claude Code, so the dashboard
+    can tell the user the system is waiting and where the queue lives."""
+    import sys as _sys, json as _json
+    from app.config import CORE_DIR
+    core = str(CORE_DIR)
+    if core not in _sys.path:
+        _sys.path.insert(0, core)
+    import ai_engine
+    qdir = ai_engine.claude_queue_dir()
+    pend = qdir / 'pending'
+    items = []
+    if pend.exists():
+        for f in sorted(pend.glob('*.json')):
+            try:
+                d = _json.loads(f.read_text(encoding='utf-8'))
+                items.append({'id': d.get('id'), 'label': d.get('label'),
+                              'image': d.get('image'), 'created': d.get('created')})
+            except Exception:
+                pass
+    return {'dir': str(qdir), 'count': len(items), 'pending': items}
+
+
+# ── Operator control session (Claude drives, the browser watches) ───────────────
+
+@router.get("/control")
+def get_control():
+    """Current controller + recent activity (for the dashboard banner/feed)."""
+    return hub.state()
+
+
+@router.get("/control/stream")
+async def control_stream():
+    """SSE of control + activity events so every open dashboard watches Claude
+    operate in real time."""
+    async def gen():
+        q = hub.subscribe()
+        try:
+            yield _sse('control', {'controller': hub.controller})
+            for a in hub.state()['activity']:
+                yield _sse('activity', a)
+            while True:
+                try:
+                    ev, data = await asyncio.wait_for(q.get(), timeout=25.0)
+                    yield _sse(ev, data)
+                except asyncio.TimeoutError:
+                    yield _sse('ping', {})
+        finally:
+            hub.unsubscribe(q)
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+class ClaimReq(BaseModel):
+    who: str = 'Claude Code'
+    note: str = ''
+
+
+@router.post("/control/claim")
+async def control_claim(req: ClaimReq):
+    return await hub.claim(req.who, req.note)
+
+
+@router.post("/control/release")
+async def control_release():
+    await hub.release()
+    return {"ok": True}
+
+
+class ActivityReq(BaseModel):
+    message: str
+    job: Optional[str] = None
+    kind: str = 'info'
+
+
+@router.post("/control/activity")
+async def control_activity(req: ActivityReq):
+    """Claude narrates a step so the user can follow along live."""
+    await hub.activity(req.message, job=req.job, kind=req.kind)
+    return {"ok": True}
+
+
+# ── Operator drive endpoints (let Claude run a full import via the API) ──────────
+
+class CreateFromPath(BaseModel):
+    pdf_path: str
+    piece_id: str
+    title: str = ''
+    composer: str = ''
+    bpm: Optional[int] = None
+
+
+@router.post("/jobs/from-path")
+async def create_job_from_path(req: CreateFromPath):
+    """Create a job from a PDF already on disk (Claude has the file locally) —
+    no multipart upload needed."""
+    src = Path(req.pdf_path)
+    if not src.exists():
+        raise HTTPException(400, f"file not found: {req.pdf_path}")
+    out_dir = MIDI_OUTPUT_DIR / req.piece_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / src.name
+    if dest.resolve() != src.resolve():
+        shutil.copyfile(src, dest)
+    job = create_job(piece_id=req.piece_id, pdf_path=str(dest), out_dir=str(out_dir),
+                     title=req.title, composer=req.composer, bpm=req.bpm)
+    job.save()
+    await hub.activity(f'created job "{req.title or req.piece_id}"', job=job.id)
+    return {"job_id": job.id, "piece_id": req.piece_id}
+
+
+@router.post("/jobs/{job_id}/render")
+def render_job_sources(job_id: str, pages: Optional[str] = None):
+    """Rasterise the PDF (optionally a page subset) and split into system strips,
+    returning absolute image paths for Claude to read."""
+    job = _require_job(job_id)
+    import sys as _sys
+    from app.config import CORE_DIR
+    if str(CORE_DIR) not in _sys.path:
+        _sys.path.insert(0, str(CORE_DIR))
+    import ai_transcribe as atr
+    from pdf_to_midi import parse_page_spec
+    pages_dir = job.out_dir / '_pages'
+    want = parse_page_spec(pages) if pages else None
+    page_pngs = atr._render_pdf_pages(job.pdf_path, pages_dir, want_pages=want)
+    out = []
+    for i, png in enumerate(page_pngs, 1):
+        if want is not None and i not in want:
+            continue
+        strips = atr._split_page_into_systems(png, pages_dir, i)
+        out.append({'page': i, 'image': str(Path(png).resolve()),
+                    'systems': [str(Path(s).resolve()) for s in strips]})
+    return {'pages_total': len(page_pngs), 'rendered': out, 'pages_dir': str(pages_dir.resolve())}
+
+
+class SetBarsReq(BaseModel):
+    bars: list
+    meta: Optional[dict] = None
+    replace: bool = True
+
+
+@router.put("/jobs/{job_id}/bars")
+async def set_bars(job_id: str, req: SetBarsReq):
+    """Bulk-write the transcribed bars (and optional meta). Emits bars_updated so
+    every open dashboard fills in live as Claude works."""
+    job = _require_job(job_id)
+    if req.meta:
+        job.meta = {**(job.meta or {}), **req.meta}
+    norm = []
+    for i, b in enumerate(req.bars, 1):
+        if not isinstance(b, dict):
+            continue
+        norm.append({'n': b.get('n', i), 'page': b.get('page'),
+                     'melody': b.get('melody', '') or '', 'bass': b.get('bass', '') or '',
+                     'issues': [], 'pitch_issues': [], 'rhythm_issues': [],
+                     'confidence': b.get('confidence', 1.0),
+                     'verified': bool(b.get('verified', False))})
+    job.bars = norm if req.replace else (job.bars + norm)
+    # Re-run the mechanical checks so flags/confidence reflect the new bars.
+    try:
+        import sys as _sys
+        from app.config import CORE_DIR
+        if str(CORE_DIR) not in _sys.path:
+            _sys.path.insert(0, str(CORE_DIR))
+        from app.pipeline.steps import _recheck_all_bars
+        _recheck_all_bars(job)
+    except Exception:
+        pass
+    if not job.steps['read'].status or job.steps['read'].status in ('idle', 'running'):
+        job.steps['read'].status = 'done'
+        job.steps['read'].pct = 100
+    job.save()
+    await job.emit('bars_updated', {'bars': job.bars, 'pages': job.pages, 'meta': job.meta})
+    await hub.activity(f'wrote {len(job.bars)} bar(s)', job=job.id)
+    return {"ok": True, "bars": len(job.bars)}
 
 
 # ── Page-level segment operations ───────────────────────────────────────────────

@@ -316,15 +316,14 @@ async def run_read(job: Job, pages_spec: Optional[str] = None,
     # This gives a clear, immediate error rather than waiting for the subprocess
     # to time out and exit with a cryptic non-zero code.
     _ensure_core_on_path()
-    import ai_correct as _ac
+    import ai_engine
+    engine = getattr(job, 'engine', None) or 'bridge'
     loop = asyncio.get_event_loop()
-    bridge_ok = await loop.run_in_executor(None, _ac._bridge_ping)
-    if not bridge_ok:
-        msg = (f'browser-ai-bridge is not running at {_ac.BRIDGE_URL} — '
-               f'start it (and ensure a Gemini/ChatGPT tab is open) then rerun this step')
+    eng_ok, eng_detail = await loop.run_in_executor(None, lambda: ai_engine.available(engine))
+    if not eng_ok:
         step.status = 'error'
-        step.issues = [{'severity': 'error', 'check': 'bridge', 'msg': msg}]
-        step.log.append(f'[pre-check] {msg}')
+        step.issues = [{'severity': 'error', 'check': 'engine', 'msg': eng_detail}]
+        step.log.append(f'[pre-check] {eng_detail}')
         job.log_step_end('read')
         job.save()
         await job.emit('step', {'step': 'read', 'status': 'error', 'pct': 2,
@@ -332,7 +331,10 @@ async def run_read(job: Job, pages_spec: Optional[str] = None,
         return
 
     step.pct = 5
-    await job.emit('progress', {'step': 'read', 'pct': 5, 'msg': 'AI bridge ✓ — transcribing…'})
+    _ready = (f'Claude Code — drop tasks in the queue and ask Claude to process them'
+              if engine == 'claude' else f'AI bridge ✓')
+    await job.emit('progress', {'step': 'read', 'pct': 5,
+                                'msg': f'{_ready} — transcribing…'})
 
     out_dir = job.out_dir
     env = {
@@ -357,6 +359,7 @@ async def run_read(job: Job, pages_spec: Optional[str] = None,
     # misread them (a wrong meter is what padded pickups and overfilled bars).
     if getattr(job, 'time_sig', None): args += ['--time-sig', str(job.time_sig)]
     if getattr(job, 'key', None):      args += ['--key', str(job.key)]
+    if getattr(job, 'engine', None):   args += ['--engine', str(job.engine)]
 
     job.cancelled = False
     proc = await asyncio.create_subprocess_exec(
@@ -666,12 +669,15 @@ async def _refine_bars(job: Job, flagged: Dict[int, List[str]], step_name: str) 
     _ensure_core_on_path()
     import ai_correct as ac
     import ai_transcribe as atr
+    import ai_engine
 
     if not flagged:
         return 0
-    if not ac._bridge_ping():
-        job.steps[step_name].log.append('[warn] AI bridge not reachable — skipping auto-fix')
-        await job.emit('log', {'step': step_name, 'line': '[warn] AI bridge not reachable — skipping auto-fix'})
+    engine = getattr(job, 'engine', None) or 'bridge'
+    eng_ok, eng_detail = ai_engine.available(engine)
+    if not eng_ok:
+        job.steps[step_name].log.append(f'[warn] {eng_detail} — skipping auto-fix')
+        await job.emit('log', {'step': step_name, 'line': f'[warn] {eng_detail} — skipping auto-fix'})
         return 0
 
     meta = job.meta
@@ -722,7 +728,9 @@ async def _refine_bars(job: Job, flagged: Dict[int, List[str]], step_name: str) 
         try:
             loop = asyncio.get_event_loop()
             resp = await loop.run_in_executor(
-                None, lambda: ac._bridge_image_ask(str(montage), prompt, provider=job.provider)
+                None, lambda: ai_engine.image_ask(str(montage), prompt,
+                                                  engine=engine, provider=job.provider,
+                                                  label='refine-bars')
             )
             data = atr._parse_json(resp)
         except Exception as e:
@@ -1135,8 +1143,9 @@ async def run_feedback(job: Job, feedback: str):
     the patched bars so the client can refresh the table.
     """
     _ensure_core_on_path()
-    import ai_correct as ac
+    import ai_correct as ac  # noqa: F401  (kept for parsing helpers)
     import ai_transcribe as atr
+    import ai_engine
 
     step = job.steps['review']
     step.status = 'running'
@@ -1145,10 +1154,12 @@ async def run_feedback(job: Job, feedback: str):
                             'msg': 'Applying feedback…'})
     step.log.append(f'[feedback] {feedback}')
 
-    if not ac._bridge_ping():
+    engine = getattr(job, 'engine', None) or 'bridge'
+    eng_ok, eng_detail = ai_engine.available(engine)
+    if not eng_ok:
         step.status = 'idle'
         await job.emit('step', {'step': 'review', 'status': 'idle', 'pct': 0,
-                                'msg': 'AI bridge not reachable — check browser-ai-bridge'})
+                                'msg': eng_detail})
         return
 
     bars_text = _serialize_bars_for_feedback(job.bars)
@@ -1165,7 +1176,8 @@ async def run_feedback(job: Job, feedback: str):
     loop = asyncio.get_event_loop()
     try:
         response = await loop.run_in_executor(
-            None, lambda: ac._bridge_ask(prompt, provider=job.provider)
+            None, lambda: ai_engine.text_ask(prompt, engine=engine,
+                                             provider=job.provider, label='feedback')
         )
         data = atr._parse_json(response)
     except Exception as e:

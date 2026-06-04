@@ -43,6 +43,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 import ai_correct  # noqa: E402  -- shared bridge + note-parsing helpers
+import ai_engine   # noqa: E402  -- pluggable transcription engine (bridge|claude)
 
 DIV = 16  # ticks per quarter note in the compact "C5(q)" note format
 NODE_BIN = ai_correct.NODE_BIN
@@ -650,11 +651,12 @@ Respond with JSON ONLY, no prose, no code fences:
 {{"timeSig": "3/8", "key": "A minor", "bpm": null}}"""
 
 
-def _detect_meter_key(strip_png, title, composer, provider):
-    """One focused bridge call → (timeSig|None, key|None, bpm|None)."""
+def _detect_meter_key(strip_png, title, composer, provider, engine=None):
+    """One focused engine call → (timeSig|None, key|None, bpm|None)."""
     try:
-        data = _parse_json(ai_correct._bridge_image_ask(
-            strip_png, _meter_key_prompt(title, composer), provider=provider))
+        data = _parse_json(ai_engine.image_ask(
+            strip_png, _meter_key_prompt(title, composer),
+            engine=engine, provider=provider, label='detect-meter-key'))
     except Exception as e:
         _log(f'meter/key detection failed ({e}); falling back to in-pass reads')
         return None, None, None
@@ -1312,7 +1314,7 @@ def _apply_refinements(all_bars, refinements):
 
 def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
                    bpm_override=None, provider='gemini', only_pages=None,
-                   max_bars=None, time_sig=None, key=None):
+                   max_bars=None, time_sig=None, key=None, engine=None):
     """Batched AI transcription with render-and-validate. Returns (tracks, bpm, meta).
 
     only_pages: optional set/iterable of 1-based page numbers to TRANSCRIBE.
@@ -1337,10 +1339,10 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
     if max_bars and only_pages is None:
         only_pages = {1}
 
-    if not ai_correct._bridge_ping():
-        raise RuntimeError(
-            f'browser-ai-bridge not reachable at {ai_correct.BRIDGE_URL} -- '
-            f'AI transcription needs the bridge running')
+    eng_ok, eng_detail = ai_engine.available(engine)
+    if not eng_ok:
+        raise RuntimeError(eng_detail)
+    _log(f'transcription engine: {eng_detail}')
 
     # Rasterise only the pages this run will actually read.
     page_pngs = _render_pdf_pages(pdf_path, pages_dir, want_pages=only_pages)
@@ -1429,7 +1431,7 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
         if i == 1 and not got_meta and strips and (
                 'timeSig' not in locked or 'key' not in locked):
             det_ts, det_key, det_bpm = _detect_meter_key(
-                strips[0], title, composer, provider)
+                strips[0], title, composer, provider, engine=engine)
             if det_ts and 'timeSig' not in locked:
                 meta['timeSig'] = det_ts
                 time_sig = det_ts        # feed it into every system's prompt
@@ -1458,15 +1460,16 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
                     data = None
             if data is None:
                 bar_hint = _detect_barlines(strip)   # mechanical bar-count hint
-                _log(f'page {i} system {j}/{len(strips)}: transcribing (Gemini)'
+                _log(f'page {i} system {j}/{len(strips)}: transcribing'
                      + (f' [~{bar_hint} bars]' if bar_hint else '') + '...')
                 t0 = time.time()
                 try:
-                    data = _parse_json(ai_correct._bridge_image_ask(
+                    data = _parse_json(ai_engine.image_ask(
                         strip, _transcribe_prompt(title, composer, i,
                                                   len(page_pngs), bar_hint,
                                                   time_sig=time_sig, key=key),
-                        provider=provider))
+                        engine=engine, provider=provider,
+                        label=f'page{i}-sys{j}'))
                 except Exception as e:
                     _log(f'page {i} system {j} failed after {time.time()-t0:.0f}s: {e}')
                     continue
@@ -1478,11 +1481,12 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
                     _log(f'page {i} system {j}: bar-count mismatch '
                          f'(ai {n} vs scan {bar_hint}) -- re-transcribing')
                     try:
-                        retry = _parse_json(ai_correct._bridge_image_ask(
+                        retry = _parse_json(ai_engine.image_ask(
                             strip, _transcribe_prompt(title, composer, i,
                                      len(page_pngs), bar_hint, strict=True,
                                      time_sig=time_sig, key=key),
-                            provider=provider))
+                            engine=engine, provider=provider,
+                            label=f'page{i}-sys{j}-strict'))
                         rn = len([b for b in (retry.get('bars') or [])
                                   if isinstance(b, dict)])
                         if abs(rn - bar_hint) < abs(n - bar_hint):
@@ -1598,12 +1602,12 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
                 if not montage:
                     continue
                 try:
-                    rdata = _parse_json(ai_correct._bridge_image_ask(
+                    rdata = _parse_json(ai_engine.image_ask(
                         str(montage),
                         _refine_prompt(title, composer, meta.get('key'),
                                        meta['timeSig'],
                                        {bn: flagged[bn] for bn, _cp in chunk}),
-                        provider=provider))
+                        engine=engine, provider=provider, label=f'refine-p{i}'))
                 except Exception as e:
                     _log(f'page {i}: refine round {rnd} chunk failed: {e}')
                     continue
@@ -1647,11 +1651,11 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
                 break
             flags = _bar_quality_flags(batch_bars, lo, meta.get('key'))
             try:
-                res = _parse_json(ai_correct._bridge_image_ask(
+                res = _parse_json(ai_engine.image_ask(
                     str(combo),
                     _validate_prompt(title, composer, i, lo, hi,
                                      meta.get('key'), flags),
-                    provider=provider))
+                    engine=engine, provider=provider, label=f'validate-p{i}'))
             except Exception as e:
                 _log(f'page {i}: holistic validation failed: {e}')
                 break
@@ -1675,12 +1679,12 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
                 _log(f'page {i}: rendering audio + validating by ear...')
                 ares = None
                 try:
-                    ares = _parse_json(ai_correct._bridge_audio_ask(
+                    ares = _parse_json(ai_engine.audio_ask(
                         str(page_wav),
                         _audio_validate_prompt(title, composer, i, lo, hi,
                                                meta.get('key'), meta['timeSig'],
                                                meta['bpm']),
-                        provider=provider))
+                        engine=engine, provider=provider))
                 except Exception as e:
                     audio_ok = False
                     _log(f'page {i}: audio validation unavailable ({e}) -- '

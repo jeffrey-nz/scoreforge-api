@@ -62,6 +62,7 @@ class Job:
         self.max_bars: Optional[int] = None    # initial bar cap (preview) for the auto-run read
         self.time_sig: Optional[str] = None    # user-supplied meter (ground truth, locks the AI)
         self.key: Optional[str] = None         # user-supplied key (ground truth, locks the AI)
+        self.engine: str = 'bridge'            # transcription engine: 'bridge' | 'claude'
 
         self.steps: Dict[str, StepState] = {
             s: StepState() for s in STEP_ORDER + ['review']
@@ -104,6 +105,7 @@ class Job:
             'max_bars': self.max_bars,
             'time_sig': self.time_sig,
             'key': self.key,
+            'engine': self.engine,
             'created': self.created,
             'approved': self.approved,
             'steps': {k: v.to_dict() for k, v in self.steps.items()},
@@ -166,6 +168,7 @@ class Job:
         job.max_bars = d.get('max_bars')
         job.time_sig = d.get('time_sig')
         job.key = d.get('key')
+        job.engine = d.get('engine') or 'bridge'
         job.created = d.get('created', time.time())
         job.approved = d.get('approved', False)
         job.bars = d.get('bars', [])

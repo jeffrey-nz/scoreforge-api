@@ -388,7 +388,7 @@ def score_to_tracks(score, bpm_override=None):
 
 def convert(input_path, piece_id, title=None, composer=None, out_base=None,
             bpm_override=None, time_sig_override=None, provider='gemini',
-            only_pages=None, max_bars=None, key=None):
+            only_pages=None, max_bars=None, key=None, engine=None):
     """Full pipeline: input -> 4 MIDI files + catalog.json.
 
     PDFs are transcribed by AI vision (ai_transcribe.py); MusicXML/MIDI inputs
@@ -420,7 +420,7 @@ def convert(input_path, piece_id, title=None, composer=None, out_base=None,
                 composer or '(unknown composer)',
                 bpm_override=bpm_override, provider=provider,
                 only_pages=only_pages, max_bars=max_bars,
-                time_sig=time_sig_override, key=key)
+                time_sig=time_sig_override, key=key, engine=engine)
         except Exception as e:
             print(f'[convert] AI transcription failed: {e}', file=sys.stderr)
             sys.exit(2)
@@ -544,6 +544,9 @@ def main():
     parser.add_argument('--key',
                         help='Override detected key (e.g. "A minor"). Locked as '
                              'ground truth so the AI cannot change it.')
+    parser.add_argument('--engine', default=None,
+                        help='Transcription engine: "bridge" (browser-ai-bridge, '
+                             'default) or "claude" (Claude Code file queue).')
     parser.add_argument('--ai-correct', action='store_true',
                         help='After import, ask an LLM (via browser-ai-bridge) '
                              'to fix obvious OMR errors. Requires the bridge '
@@ -581,6 +584,7 @@ def main():
         only_pages        = parse_page_spec(args.pages),
         max_bars          = args.max_bars,
         key               = args.key,
+        engine            = args.engine,
     )
 
     print('\n-- Catalog entry --')
