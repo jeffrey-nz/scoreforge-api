@@ -1159,18 +1159,26 @@ def _apply_refinements(all_bars, refinements):
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
-                   bpm_override=None, provider='gemini', only_pages=None):
+                   bpm_override=None, provider='gemini', only_pages=None,
+                   max_bars=None):
     """Batched AI transcription with render-and-validate. Returns (tracks, bpm, meta).
 
     only_pages: optional set/iterable of 1-based page numbers to TRANSCRIBE.
       Pages already cached (page_NN.done.json) are always loaded so partial
       compiles accumulate; pages outside the set that aren't cached are left
       'pending' (no bars) so the user can compile them later. None = all pages.
+    max_bars: optional cap — stop after this many bars (a fast preview, e.g.
+      the first 2 bars). The page it stops on is marked 'partial' so it can be
+      recompiled in full later. None = no limit.
     """
     pdf_path = Path(pdf_path)
     out_dir = Path(out_dir)
     pages_dir = out_dir / '_pages'
     only_pages = set(only_pages) if only_pages else None
+    try:
+        max_bars = int(max_bars) if max_bars else None
+    except (TypeError, ValueError):
+        max_bars = None
 
     if not ai_correct._bridge_ping():
         raise RuntimeError(
@@ -1216,14 +1224,19 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
         page_done = pages_dir / f'page_{i:02d}.done.json'
         if page_done.exists():
             try:
-                cbars = [b for b in (json.loads(page_done.read_text(
-                    encoding='utf-8')).get('bars') or []) if isinstance(b, dict)]
+                _cache = json.loads(page_done.read_text(encoding='utf-8'))
+                cbars = [b for b in (_cache.get('bars') or []) if isinstance(b, dict)]
                 lo = len(all_bars) + 1
                 all_bars.extend(cbars)
                 hi = len(all_bars)
+                # Preserve a partial (bar-limited preview) page's status so the
+                # UI keeps offering to recompile it in full.
                 page_manifest.append({'file': png.name, 'page': i,
-                                      'startBar': lo, 'endBar': hi, 'status': 'done'})
-                _log(f'page {i}/{len(page_pngs)}: resumed from cache ({len(cbars)} bars)')
+                                      'startBar': lo, 'endBar': hi,
+                                      'status': 'partial' if _cache.get('partial')
+                                      else 'done'})
+                _log(f'page {i}/{len(page_pngs)}: resumed from cache '
+                     f'({len(cbars)} bars{", partial" if _cache.get("partial") else ""})')
                 continue
             except Exception:
                 _log(f'page {i}: cached result unreadable -- re-transcribing')
@@ -1243,6 +1256,7 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
         _log(f'page {i}: split into {len(strips)} system strip(s)')
         page_start = len(all_bars) + 1
         bar_crop = {}  # global_bar_no -> per-bar crop PNG, for refinement
+        truncated = False  # set when a max_bars cap stops this page early
         for j, strip in enumerate(strips, 1):
             sys_cache = pages_dir / f'sys_{i:02d}_{j:02d}.json'
             data = None
@@ -1312,13 +1326,42 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
                 if crops and len(crops) == len(sys_bars):
                     for k, cp in enumerate(crops):
                         bar_crop[gstart + k] = cp
+            # Bar-limit preview: stop as soon as we have enough bars.
+            if max_bars and len(all_bars) >= max_bars:
+                del all_bars[max_bars:]
+                truncated = True
+                _log(f'page {i}: reached bar limit ({max_bars}) — stopping early '
+                     f'(preview; this page is marked partial)')
+                break
         lo, hi = page_start, len(all_bars)
         page_manifest.append({'file': png.name, 'page': i, 'startBar': lo,
-                              'endBar': hi, 'status': 'done' if hi >= lo else 'empty'})
+                              'endBar': hi,
+                              'status': 'partial' if truncated
+                              else ('done' if hi >= lo else 'empty')})
         _log(f'page {i}: {hi - lo + 1 if hi >= lo else 0} bar(s) total '
              f'(bars {lo}-{hi})')
         if hi < lo:
             continue
+
+        # A bar-limited preview skips the refinement/validation passes and
+        # stops here — the partial page caches what it has and can be
+        # recompiled in full later.
+        if truncated:
+            meta['bpm'] = bpm_override or meta['bpm'] or 100
+            _save_meta()
+            _write_piece(piece_id, out_dir, all_bars, meta)
+            try:
+                page_done.write_text(
+                    json.dumps({'bars': all_bars[lo - 1:hi], 'partial': True},
+                               indent=1), encoding='utf-8')
+            except Exception:
+                pass
+            # Remaining pages stay pending so the UI can compile them later.
+            for pj in range(i + 1, len(page_pngs) + 1):
+                page_manifest.append({'file': page_pngs[pj - 1].name, 'page': pj,
+                                      'startBar': 0, 'endBar': 0,
+                                      'status': 'pending'})
+            break
         meta['bpm'] = bpm_override or meta['bpm'] or 100
         _save_meta()
 

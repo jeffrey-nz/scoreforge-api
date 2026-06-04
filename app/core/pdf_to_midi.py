@@ -388,7 +388,7 @@ def score_to_tracks(score, bpm_override=None):
 
 def convert(input_path, piece_id, title=None, composer=None, out_base=None,
             bpm_override=None, time_sig_override=None, provider='gemini',
-            only_pages=None):
+            only_pages=None, max_bars=None):
     """Full pipeline: input -> 4 MIDI files + catalog.json.
 
     PDFs are transcribed by AI vision (ai_transcribe.py); MusicXML/MIDI inputs
@@ -396,6 +396,7 @@ def convert(input_path, piece_id, title=None, composer=None, out_base=None,
 
     only_pages: optional iterable of 1-based page numbers to transcribe (PDF
       only); pages outside it are left pending for a later partial compile.
+    max_bars: optional cap on bars transcribed (PDF only) — a fast preview.
     """
     input_path = Path(input_path)
     out_base   = Path(out_base) if out_base else DEFAULT_OUT
@@ -418,7 +419,7 @@ def convert(input_path, piece_id, title=None, composer=None, out_base=None,
                 title or piece_id.replace('_', ' ').title(),
                 composer or '(unknown composer)',
                 bpm_override=bpm_override, provider=provider,
-                only_pages=only_pages)
+                only_pages=only_pages, max_bars=max_bars)
         except Exception as e:
             print(f'[convert] AI transcription failed: {e}', file=sys.stderr)
             sys.exit(2)
@@ -551,6 +552,9 @@ def main():
                         help='PDF only: page range/list to transcribe, e.g. '
                              '"1-2", "1,3,5", "2-". Others are left pending for '
                              'a later partial compile. Default: all pages.')
+    parser.add_argument('--max-bars', dest='max_bars', type=int,
+                        help='PDF only: stop after N bars (a fast preview, e.g. '
+                             '2). The page it stops on is marked partial.')
     args = parser.parse_args()
 
     inp = Path(args.input)
@@ -571,6 +575,7 @@ def main():
         time_sig_override = args.time_sig,
         provider          = args.ai_provider,
         only_pages        = parse_page_spec(args.pages),
+        max_bars          = args.max_bars,
     )
 
     print('\n-- Catalog entry --')

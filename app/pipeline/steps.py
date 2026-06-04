@@ -251,15 +251,19 @@ def _parse_read_pct(line: str, page_current: int, page_total: int) -> Optional[i
     return None
 
 
-async def run_read(job: Job, pages_spec: Optional[str] = None):
+async def run_read(job: Job, pages_spec: Optional[str] = None,
+                   max_bars: Optional[int] = None):
     step = job.steps['read']
-    # On the initial auto-run, fall back to the page range chosen at upload.
+    # On the initial auto-run, fall back to the limits chosen at upload.
     if pages_spec is None:
         pages_spec = getattr(job, 'pages_spec', None)
+    if max_bars is None:
+        max_bars = getattr(job, 'max_bars', None)
     step.status = 'running'
     step.pct = 2
     job.log_step_start('read')
-    range_note = f' (pages {pages_spec})' if pages_spec else ''
+    range_note = (f' (pages {pages_spec})' if pages_spec
+                  else f' (first {max_bars} bars)' if max_bars else '')
     await job.emit('step', {'step': 'read', 'status': 'running', 'pct': 2,
                             'msg': f'Starting AI transcription{range_note}…'})
 
@@ -303,6 +307,7 @@ async def run_read(job: Job, pages_spec: Optional[str] = None):
     if job.composer: args += ['--composer', job.composer]
     if job.bpm:      args += ['--bpm', str(job.bpm)]
     if pages_spec:   args += ['--pages', str(pages_spec)]
+    if max_bars:     args += ['--max-bars', str(max_bars)]
 
     job.cancelled = False
     proc = await asyncio.create_subprocess_exec(

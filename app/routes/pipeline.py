@@ -41,10 +41,12 @@ async def create_import_job(
     bpm: Optional[int] = Form(None),
     provider: str = Form("gemini"),
     pages: Optional[str] = Form(None),
+    max_bars: Optional[int] = Form(None),
 ):
     """Upload a PDF and create a new import job. Returns job_id immediately.
-    `pages` (e.g. "1-2") compiles only a subset now; the rest can be
-    compiled later from the review screen."""
+    `pages` (e.g. "1-2") or `max_bars` (e.g. 2) compiles only a subset now;
+    the rest can be compiled later from the review screen. `provider` picks
+    the AI (gemini, chatgpt, deepseek, copilot, grok)."""
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(400, "Only PDF files accepted")
 
@@ -62,9 +64,10 @@ async def create_import_job(
         title=title,
         composer=composer,
         bpm=bpm,
-        provider=provider,
+        provider=provider or 'gemini',
     )
     job.pages_spec = (pages or '').strip() or None
+    job.max_bars = max_bars if (max_bars and max_bars > 0) else None
     job.save()
 
     # Kick off the pipeline starting at 'detect' (auto-advances through all steps)
@@ -141,7 +144,8 @@ def _sse(event_type: str, data) -> str:
 # ── Step control ───────────────────────────────────────────────────────────────
 
 class StepRunRequest(BaseModel):
-    pages: Optional[str] = None   # e.g. "1-2", "3,5" — read step only
+    pages: Optional[str] = None       # e.g. "1-2", "3,5" — read step only
+    max_bars: Optional[int] = None    # e.g. 2 — read step only (preview)
 
 
 @router.post("/jobs/{job_id}/steps/{step_name}/run")
@@ -166,9 +170,10 @@ async def run_job_step(job_id: str, step_name: str, req: Optional[StepRunRequest
         job.steps[s].issues = []
 
     pages = (req.pages if req else None)
-    if step_name == 'read' and pages:
+    max_bars = (req.max_bars if req else None)
+    if step_name == 'read' and (pages or max_bars):
         async def _read_then_advance():
-            await run_read(job, pages_spec=pages)
+            await run_read(job, pages_spec=pages, max_bars=max_bars)
             if job.steps['read'].status == 'done':
                 await run_step(job, 'pitch')
         asyncio.create_task(_read_then_advance())

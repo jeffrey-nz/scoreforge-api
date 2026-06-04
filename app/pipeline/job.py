@@ -59,6 +59,7 @@ class Job:
         self.created = time.time()
         self.approved = False
         self.pages_spec: Optional[str] = None  # initial page range for the auto-run read
+        self.max_bars: Optional[int] = None    # initial bar cap (preview) for the auto-run read
 
         self.steps: Dict[str, StepState] = {
             s: StepState() for s in STEP_ORDER + ['review']
