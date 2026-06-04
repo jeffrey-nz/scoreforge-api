@@ -247,6 +247,56 @@ def get_page_image(job_id: str, page_n: int):
     return FileResponse(str(img), media_type='image/png')
 
 
+# ── Meta suggestion ────────────────────────────────────────────────────────────
+
+class SuggestMetaRequest(BaseModel):
+    filename: str
+
+
+@router.post("/suggest-meta")
+async def suggest_meta(req: SuggestMetaRequest):
+    """Ask the AI bridge to infer title + composer from a filename.
+
+    Returns {title, composer} or raises 503 if the bridge is unreachable.
+    """
+    import re as _re
+    import sys as _sys
+    from app.config import CORE_DIR
+
+    core = str(CORE_DIR)
+    if core not in _sys.path:
+        _sys.path.insert(0, core)
+
+    import ai_correct as ac
+
+    loop = asyncio.get_event_loop()
+    bridge_up = await loop.run_in_executor(None, ac._bridge_ping)
+    if not bridge_up:
+        raise HTTPException(503, "AI bridge not available — start browser-ai-bridge first")
+
+    filename = req.filename.strip()
+    prompt = f"""A user is importing a sheet music file named "{filename}".
+
+Identify the most likely piece title and composer based on the filename.
+Use canonical names (e.g. "Für Elise" not "fur_elise", "Ludwig van Beethoven" not "beethoven").
+If the filename is ambiguous, make the most reasonable inference.
+
+Respond with JSON only — no prose, no markdown:
+{{"title": "...", "composer": "..."}}"""
+
+    try:
+        response = await loop.run_in_executor(
+            None, lambda: ac._bridge_ask(prompt, provider='gemini')
+        )
+        data = json.loads(_re.search(r'\{[^{}]+\}', response, _re.DOTALL).group())
+        return {
+            'title':    str(data.get('title', '')).strip(),
+            'composer': str(data.get('composer', '')).strip(),
+        }
+    except Exception as e:
+        raise HTTPException(500, f"AI suggestion failed: {e}")
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _require_job(job_id: str) -> Job:
