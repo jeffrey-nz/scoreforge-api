@@ -509,12 +509,15 @@ async def _refine_bars(job: Job, flagged: Dict[int, List[str]], step_name: str) 
         chunk = flagged_items[chunk_start:chunk_start + CHUNK]
         flagged_map = {bn: reasons for bn, reasons in chunk}
 
-        # Build bar crop images for this chunk
-        crops = []
-        for bn, _ in chunk:
-            crop_path = _find_bar_crop(bn, bars, pages_dir)
-            if crop_path:
-                crops.append((bn, crop_path))
+        # Build bar crop images for this chunk. _find_bar_crop does synchronous
+        # PIL work, so run it off the event loop — otherwise a refine pass
+        # blocks every other request (e.g. a new upload "hangs").
+        loop = asyncio.get_event_loop()
+        crops = await loop.run_in_executor(
+            None,
+            lambda: [(bn, cp) for bn, _ in chunk
+                     if (cp := _find_bar_crop(bn, bars, pages_dir))]
+        )
 
         if not crops:
             continue
