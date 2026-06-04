@@ -626,6 +626,46 @@ Notation rules:
   - Output JSON only."""
 
 
+def _meter_key_prompt(title, composer):
+    """A tiny, focused question: read ONLY the meter + key off the first staff.
+    A narrow task is far more reliable than meter-as-afterthought inside a full
+    transcription, so we establish it once up front and lock it."""
+    return f"""You are reading the very beginning of printed sheet music.
+
+The attached image is the first system (top line) of "{title}" by {composer}.
+
+Look ONLY at the start of the staff, right after the clef, and report:
+  - "timeSig": the TIME SIGNATURE printed there, as "n/d" (e.g. "3/8", "6/8",
+    "2/4", "3/4", "4/4"; a common-time C = "4/4", cut-time = "2/2"). Look
+    carefully — a small "3/8" is easy to misread as "4/4".
+  - "key": the KEY implied by the key signature (count the sharps/flats), as
+    e.g. "A minor", "C major", "G major", "F major". If a piece is famous (e.g.
+    Für Elise is A minor, 3/8) use that to break ties, but trust the print.
+  - "bpm": tempo in beats/min if a metronome or tempo word is printed, else null.
+
+Respond with JSON ONLY, no prose, no code fences:
+{{"timeSig": "3/8", "key": "A minor", "bpm": null}}"""
+
+
+def _detect_meter_key(strip_png, title, composer, provider):
+    """One focused bridge call → (timeSig|None, key|None, bpm|None)."""
+    try:
+        data = _parse_json(ai_correct._bridge_image_ask(
+            strip_png, _meter_key_prompt(title, composer), provider=provider))
+    except Exception as e:
+        _log(f'meter/key detection failed ({e}); falling back to in-pass reads')
+        return None, None, None
+    if not isinstance(data, dict):
+        return None, None, None
+    ts = _sane_timesig(data.get('timeSig'), None)
+    key = (str(data.get('key')).strip() or None) if data.get('key') else None
+    try:
+        bpm = int(round(float(data.get('bpm'))))
+    except (TypeError, ValueError):
+        bpm = None
+    return ts, key, bpm
+
+
 def _validate_prompt(title, composer, page_num, lo, hi, key=None, flags=None):
     keyline = (f'\nThe piece is in {key}. A note far outside that key is usually '
                f'either a deliberate accidental that IS printed (keep it) or a '
@@ -1334,6 +1374,29 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
         _log(f'=== page {i}/{len(page_pngs)} ===')
         strips = _split_page_into_systems(png, pages_dir, i)
         _log(f'page {i}: split into {len(strips)} system strip(s)')
+
+        # Establish meter/key ONCE, up front, from the first system — a focused
+        # single-purpose read is far more reliable than the meter the model
+        # mentions in passing while transcribing notes. No human input needed;
+        # a user-supplied value (in `locked`) always wins and skips this.
+        if i == 1 and not got_meta and strips and (
+                'timeSig' not in locked or 'key' not in locked):
+            det_ts, det_key, det_bpm = _detect_meter_key(
+                strips[0], title, composer, provider)
+            if det_ts and 'timeSig' not in locked:
+                meta['timeSig'] = det_ts
+                time_sig = det_ts        # feed it into every system's prompt
+                _log(f'detected time signature: {det_ts}')
+            if det_key and 'key' not in locked:
+                meta['key'] = det_key
+                key = det_key
+                _log(f'detected key: {det_key}')
+            if det_bpm and not bpm_override and not meta.get('bpm'):
+                meta['bpm'] = det_bpm
+            if det_ts or det_key:
+                got_meta = True          # don't let in-pass reads override it
+                _save_meta()
+
         page_start = len(all_bars) + 1
         bar_crop = {}  # global_bar_no -> per-bar crop PNG, for refinement
         truncated = False  # set when a max_bars cap stops this page early
