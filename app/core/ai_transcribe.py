@@ -54,17 +54,28 @@ REFINE_CHUNK   = 8  # max bar crops per montage (one AI call)
 
 # ── PDF + rendering helpers ───────────────────────────────────────────────────
 
-def _render_pdf_pages(pdf_path, pages_dir, dpi=300):
-    """Render every PDF page to pages_dir/page_NN.png. Returns the PNG paths."""
+def _render_pdf_pages(pdf_path, pages_dir, dpi=300, want_pages=None):
+    """Render PDF pages to pages_dir/page_NN.png. Returns one PNG path per page
+    in the document (in order).
+
+    want_pages: optional set of 1-based page numbers to actually rasterise.
+      Pages outside it are still listed (so page counts and manifests stay
+      correct) but not rendered. A bar-limit preview or page-range import only
+      ever reads its in-scope pages, and rasterising every page of a long score
+      at 300 DPI up front was the main reason a "first 2 bars" request crawled.
+      None = render every page.
+    """
     import fitz  # PyMuPDF
     pages_dir.mkdir(parents=True, exist_ok=True)
     doc = fitz.open(str(pdf_path))
     out = []
     mat = fitz.Matrix(dpi / 72.0, dpi / 72.0)
     for i in range(doc.page_count):
-        png = pages_dir / f'page_{i + 1:02d}.png'
-        doc[i].get_pixmap(matrix=mat, alpha=False).save(str(png))
+        n = i + 1
+        png = pages_dir / f'page_{n:02d}.png'
         out.append(png)
+        if want_pages is None or n in want_pages:
+            doc[i].get_pixmap(matrix=mat, alpha=False).save(str(png))
     doc.close()
     return out
 
@@ -1203,12 +1214,18 @@ def transcribe_pdf(pdf_path, out_dir, piece_id, title, composer,
     except (TypeError, ValueError):
         max_bars = None
 
+    # A bar-limit preview only ever reads page 1 (matching the detect scope), so
+    # bound it explicitly — we then neither rasterise nor scan later pages.
+    if max_bars and only_pages is None:
+        only_pages = {1}
+
     if not ai_correct._bridge_ping():
         raise RuntimeError(
             f'browser-ai-bridge not reachable at {ai_correct.BRIDGE_URL} -- '
             f'AI transcription needs the bridge running')
 
-    page_pngs = _render_pdf_pages(pdf_path, pages_dir)
+    # Rasterise only the pages this run will actually read.
+    page_pngs = _render_pdf_pages(pdf_path, pages_dir, want_pages=only_pages)
     if not page_pngs:
         raise RuntimeError('PDF has no pages')
     print(f'[transcribe] {len(page_pngs)} page(s) rendered; provider {provider}')

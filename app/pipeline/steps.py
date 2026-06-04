@@ -171,27 +171,23 @@ async def run_detect(job: Job):
     pages_dir = job.out_dir / '_pages'
     pages_dir.mkdir(parents=True, exist_ok=True)
 
-    # Render PDF to PNG
+    # ── Scope first: decide which pages this run needs, so the render only ───
+    # rasterises those. A "first N bars" / page-range preview must not churn
+    # through (or even rasterise) the whole piece. The page count is read
+    # cheaply without rendering; the detailed system/barline pass and the
+    # render both run only on in-scope pages.
+    from pdf_to_midi import parse_page_spec
     try:
-        pages = await loop.run_in_executor(
-            None, atr._render_pdf_pages, job.pdf_path, pages_dir
-        )
+        import fitz
+        _doc = fitz.open(job.pdf_path)
+        n_pages = _doc.page_count
+        _doc.close()
     except Exception as e:
         step.status = 'error'
-        step.issues = [{'severity': 'error', 'msg': f'Failed to render PDF: {e}'}]
+        step.issues = [{'severity': 'error', 'msg': f'Failed to open PDF: {e}'}]
         await job.emit('step', {'step': 'detect', 'status': 'error', 'msg': str(e)})
         return
 
-    step.pct = 40
-    await job.emit('progress', {'step': 'detect', 'pct': 40,
-                                'msg': f'{len(pages)} page(s) rendered'})
-
-    # ── Scope: only analyse the pages this run will actually transcribe ──────
-    # so a "first N bars" / page-range preview doesn't look like it's churning
-    # through the whole piece. All pages are still counted (cheap), but the
-    # detailed system/barline pass only runs on in-scope pages.
-    from pdf_to_midi import parse_page_spec
-    n_pages = len(pages)
     max_bars = getattr(job, 'max_bars', None)
     pages_spec = getattr(job, 'pages_spec', None)
     if max_bars:
@@ -204,7 +200,25 @@ async def run_detect(job: Job):
         scope_pages = set(range(1, n_pages + 1))
         scope_label = 'whole piece'
 
-    if scope_pages != set(range(1, n_pages + 1)):
+    all_pages = set(range(1, n_pages + 1))
+    want = None if scope_pages == all_pages else scope_pages
+
+    # Render PDF to PNG (only the in-scope pages when previewing a subset)
+    try:
+        pages = await loop.run_in_executor(
+            None, lambda: atr._render_pdf_pages(job.pdf_path, pages_dir, want_pages=want)
+        )
+    except Exception as e:
+        step.status = 'error'
+        step.issues = [{'severity': 'error', 'msg': f'Failed to render PDF: {e}'}]
+        await job.emit('step', {'step': 'detect', 'status': 'error', 'msg': str(e)})
+        return
+
+    step.pct = 40
+    await job.emit('progress', {'step': 'detect', 'pct': 40,
+                                'msg': f'{len(pages)} page(s) rendered'})
+
+    if scope_pages != all_pages:
         step.log.append(f'scope: {scope_label} — analysing page(s) '
                         f'{sorted(scope_pages)} of {n_pages}')
         await job.emit('progress', {'step': 'detect', 'pct': 42,
