@@ -41,6 +41,11 @@ DASHBOARD     = Path(__file__).parent
 SHOWCASE_MIDI = DASHBOARD / 'showcase-midi'
 BRIDGE_URL    = os.environ.get('AI_BRIDGE_URL', 'http://localhost:3333')
 NODE_BIN      = os.environ.get('NODE_BIN', r'C:\Program Files\nodejs\node.exe')
+# Model tier for transcription/correction. Sheet-music reading is a
+# high-volume, mechanical visual task — the fast/cheap model (Gemini Flash,
+# GPT-4o, DeepSeek-V3) is plenty and many times quicker than the slow
+# "thinking"/Pro tiers. Override with AI_BRIDGE_MODE=pro|thinking if needed.
+BRIDGE_MODE   = os.environ.get('AI_BRIDGE_MODE', 'fast')
 
 PITCH_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
@@ -516,25 +521,28 @@ def _bridge_post(endpoint, payload, timeout, attempts, what):
     raise RuntimeError(f'bridge {what} failed after {attempts} attempts: {last_err}')
 
 
-def _bridge_ask(prompt, provider='gemini', timeout=420, attempts=3):
+def _bridge_ask(prompt, provider='gemini', timeout=420, attempts=3,
+                mode=BRIDGE_MODE):
     """Send a prompt to the bridge and return the text response (with retries)."""
-    return _bridge_post('/api/ask', {'provider': provider, 'prompt': prompt},
+    return _bridge_post('/api/ask', {'provider': provider, 'prompt': prompt,
+                                     'mode': mode},
                         timeout, attempts, 'ask')
 
 
 def _bridge_image_ask(image_path, prompt, provider='gemini', timeout=420,
-                      attempts=3):
+                      attempts=3, mode=BRIDGE_MODE):
     """Upload an image to /api/image-ask and return the response (with retries)."""
     return _bridge_post('/api/image-ask', {
         'provider': provider,
         'imagePath': str(image_path),
         'prompt': prompt,
         'label': 'sheet-music-visual-heal',
+        'mode': mode,
     }, timeout, attempts, 'image-ask')
 
 
 def _bridge_audio_ask(audio_path, prompt, provider='gemini', timeout=600,
-                      attempts=2):
+                      attempts=2, mode=BRIDGE_MODE):
     """Upload an audio clip to /api/audio-ask and return the response.
 
     Used to let the AI *hear* a synth render of a transcription so it can
@@ -546,6 +554,7 @@ def _bridge_audio_ask(audio_path, prompt, provider='gemini', timeout=600,
         'audioPath': str(audio_path),
         'prompt': prompt,
         'label': 'sheet-music-audio-validate',
+        'mode': mode,
     }, timeout, attempts, 'audio-ask')
 
 
