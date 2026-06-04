@@ -304,12 +304,14 @@ async def run_read(job: Job, pages_spec: Optional[str] = None):
     if job.bpm:      args += ['--bpm', str(job.bpm)]
     if pages_spec:   args += ['--pages', str(pages_spec)]
 
+    job.cancelled = False
     proc = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         env=env,
     )
+    job._proc = proc
 
     page_current = 0
     page_total = 1
@@ -335,6 +337,26 @@ async def run_read(job: Job, pages_spec: Optional[str] = None):
             await job.emit('log', {'step': 'read', 'line': clean, 'pct': step.pct})
 
     await proc.wait()
+    job._proc = None
+
+    # Stopped by the user — any partial pages already cached are preserved so
+    # the import can be resumed; the step returns to idle, not error.
+    if job.cancelled:
+        bars = _load_bars_from_cache(job)
+        job.bars = [{'n': i+1, 'page': b.get('page'),
+                     'melody': b.get('melody',''), 'bass': b.get('bass',''),
+                     'issues': [], 'confidence': 1.0} for i, b in enumerate(bars)]
+        job.pages = _load_pages_model(job)
+        job.meta = _load_meta_from_cache(job) or job.meta
+        step.status = 'idle'
+        step.pct = 0
+        step.log.append('[stopped] transcription cancelled by user')
+        job.log_step_end('read')
+        job.save()
+        await job.emit('step', {'step': 'read', 'status': 'idle', 'pct': 0,
+                                'msg': 'Stopped — partial pages kept; resume any time'})
+        await job.emit('bars_updated', {'bars': job.bars, 'pages': job.pages})
+        return
 
     if proc.returncode != 0:
         step.status = 'error'
@@ -961,10 +983,57 @@ async def run_step(job: Job, step_name: str):
         await job.emit('step', {'step': step_name, 'status': 'error', 'msg': str(e)})
         return
 
-    # Auto-advance: if current step succeeded, start the next one automatically
+    # Auto-advance: if current step succeeded (and wasn't cancelled), start
+    # the next one automatically.
+    if job.cancelled:
+        return
     if job.steps[step_name].status == 'done':
         idx = STEP_ORDER.index(step_name)
         if idx + 1 < len(STEP_ORDER):
             next_step = STEP_ORDER[idx + 1]
             if job.steps[next_step].status == 'idle':
                 await run_step(job, next_step)
+
+
+# ── Stop / cancel ───────────────────────────────────────────────────────────────
+
+async def cancel_job(job: Job) -> bool:
+    """Stop a running transcription. Kills the subprocess if one is live and
+    flags the job so the pipeline does not auto-advance. Returns True if
+    something was actually running."""
+    job.cancelled = True
+    proc = job._proc
+    running = proc is not None and proc.returncode is None
+    if running:
+        # Kill the whole tree — the transcription may have spawned node render
+        # helpers that proc.terminate() (direct child only) would orphan.
+        killed_tree = False
+        if os.name == 'nt' and proc.pid:
+            try:
+                import subprocess as _sp
+                _sp.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)],
+                        capture_output=True, timeout=5)
+                killed_tree = True
+            except Exception:
+                pass
+        if not killed_tree:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=3.0)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    # Reset any running step back to idle so the UI un-sticks.
+    for s in STEP_ORDER:
+        if job.steps[s].status == 'running':
+            job.steps[s].status = 'idle'
+            job.steps[s].pct = 0
+    job.save()
+    await job.emit('step', {'step': 'read', 'status': 'idle', 'pct': 0,
+                            'msg': 'Stopped by user'})
+    return running

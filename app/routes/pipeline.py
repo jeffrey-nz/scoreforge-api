@@ -24,7 +24,8 @@ from pydantic import BaseModel
 
 from app.config import MIDI_OUTPUT_DIR
 from app.pipeline.job import create_job, get_job, list_jobs, Job, STEP_ORDER
-from app.pipeline.steps import run_step, run_approve, run_feedback, run_read, run_recompile_page
+from app.pipeline.steps import (run_step, run_approve, run_feedback, run_read,
+                                run_recompile_page, cancel_job)
 
 router = APIRouter()
 
@@ -174,6 +175,17 @@ async def run_job_step(job_id: str, step_name: str, req: Optional[StepRunRequest
     else:
         asyncio.create_task(run_step(job, step_name))
     return {"ok": True, "step": step_name, "pages": pages}
+
+
+# ── Stop / cancel ───────────────────────────────────────────────────────────────
+
+@router.post("/jobs/{job_id}/stop")
+async def stop_job(job_id: str):
+    """Stop the running transcription. Already-compiled pages are kept so the
+    import can be resumed; the step returns to idle (not error)."""
+    job = _require_job(job_id)
+    running = await cancel_job(job)
+    return {"ok": True, "wasRunning": running}
 
 
 # ── Approve ────────────────────────────────────────────────────────────────────

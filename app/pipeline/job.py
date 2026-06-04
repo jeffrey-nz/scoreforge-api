@@ -69,6 +69,8 @@ class Job:
 
         self._queues: List[asyncio.Queue] = []
         self._task: Optional[asyncio.Task] = None
+        self._proc = None          # running transcription subprocess, if any
+        self.cancelled = False     # set by a stop request to halt auto-advance
 
         # ── Pipeline log (written to pipeline.log.json on every boundary) ──────
         self._step_start_times: Dict[str, float] = {}
