@@ -555,6 +555,7 @@ async def create_job_from_path(req: CreateFromPath):
         shutil.copyfile(src, dest)
     job = create_job(piece_id=req.piece_id, pdf_path=str(dest), out_dir=str(out_dir),
                      title=req.title, composer=req.composer, bpm=req.bpm)
+    job.source = 'claude'   # operator-driven: skip the automated pipeline UI
     job.save()
     await hub.activity(f'created job "{req.title or req.piece_id}"', job=job.id)
     return {"job_id": job.id, "piece_id": req.piece_id}

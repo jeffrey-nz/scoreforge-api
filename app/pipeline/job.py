@@ -63,6 +63,7 @@ class Job:
         self.time_sig: Optional[str] = None    # user-supplied meter (ground truth, locks the AI)
         self.key: Optional[str] = None         # user-supplied key (ground truth, locks the AI)
         self.engine: str = 'bridge'            # transcription engine: 'bridge' | 'claude'
+        self.source: str = 'pipeline'          # 'pipeline' (auto steps) | 'claude' (operator-driven)
 
         self.steps: Dict[str, StepState] = {
             s: StepState() for s in STEP_ORDER + ['review']
@@ -106,6 +107,7 @@ class Job:
             'time_sig': self.time_sig,
             'key': self.key,
             'engine': self.engine,
+            'source': self.source,
             'created': self.created,
             'approved': self.approved,
             'steps': {k: v.to_dict() for k, v in self.steps.items()},
@@ -125,6 +127,7 @@ class Job:
             'created': self.created,
             'approved': self.approved,
             'status': self.overall_status(),
+            'source': self.source,
             'bars': len(self.bars),
             'verified': sum(1 for b in self.bars if b.get('verified')),
             'pages': len(self.pages),
@@ -142,6 +145,10 @@ class Job:
             return 'running'
         if any(s.status == 'error' for s in self.steps.values()):
             return 'error'
+        # Claude-driven jobs skip the automated pipeline — having bars means
+        # they're ready to review.
+        if self.source == 'claude':
+            return 'review' if self.bars else 'incomplete'
         auto = ['detect', 'read', 'pitch', 'rhythm', 'theory']
         done = [s for s in auto if self.steps[s].status == 'done']
         if len(done) == len(auto):
@@ -169,6 +176,7 @@ class Job:
         job.time_sig = d.get('time_sig')
         job.key = d.get('key')
         job.engine = d.get('engine') or 'bridge'
+        job.source = d.get('source') or 'pipeline'
         job.created = d.get('created', time.time())
         job.approved = d.get('approved', False)
         job.bars = d.get('bars', [])
