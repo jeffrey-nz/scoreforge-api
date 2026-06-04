@@ -566,9 +566,10 @@ async def create_job_from_path(req: CreateFromPath):
 
 
 @router.post("/jobs/{job_id}/render")
-def render_job_sources(job_id: str, pages: Optional[str] = None):
-    """Rasterise the PDF (optionally a page subset) and split into system strips,
-    returning absolute image paths for Claude to read."""
+def render_job_sources(job_id: str, pages: Optional[str] = None, dpi: int = 300):
+    """Rasterise the PDF (optionally a page subset, at the given DPI) and split
+    into system strips, returning absolute image paths for Claude to read. Use
+    a higher dpi (e.g. 450) to read dense engraving / octaves / rhythms."""
     job = _require_job(job_id)
     import sys as _sys
     from app.config import CORE_DIR
@@ -578,7 +579,8 @@ def render_job_sources(job_id: str, pages: Optional[str] = None):
     from pdf_to_midi import parse_page_spec
     pages_dir = job.out_dir / '_pages'
     want = parse_page_spec(pages) if pages else None
-    page_pngs = atr._render_pdf_pages(job.pdf_path, pages_dir, want_pages=want)
+    dpi = max(150, min(600, int(dpi)))
+    page_pngs = atr._render_pdf_pages(job.pdf_path, pages_dir, want_pages=want, dpi=dpi)
     out = []
     for i, png in enumerate(page_pngs, 1):
         if want is not None and i not in want:
@@ -587,6 +589,30 @@ def render_job_sources(job_id: str, pages: Optional[str] = None):
         out.append({'page': i, 'image': str(Path(png).resolve()),
                     'systems': [str(Path(s).resolve()) for s in strips]})
     return {'pages_total': len(page_pngs), 'rendered': out, 'pages_dir': str(pages_dir.resolve())}
+
+
+@router.post("/jobs/{job_id}/render-transcription")
+def render_transcription(job_id: str):
+    """Render the job's CURRENT bars to sheet-music PNG(s) — so Claude can read
+    back exactly what it transcribed and compare it to the source (octaves,
+    clef spread, rhythm), then fix. The self-verification half of the loop."""
+    job = _require_job(job_id)
+    if not job.bars:
+        raise HTTPException(400, "no bars to render")
+    import sys as _sys
+    from app.config import CORE_DIR
+    if str(CORE_DIR) not in _sys.path:
+        _sys.path.insert(0, str(CORE_DIR))
+    import ai_transcribe as atr
+    meta = dict(job.meta or {})
+    meta.setdefault('timeSig', '4/4'); meta.setdefault('key', 'C major')
+    meta.setdefault('bpm', job.bpm or 100)
+    try:
+        pngs = atr._render_batch_sheet(job.bars, meta)
+    except Exception as e:
+        raise HTTPException(500, f"render failed: {e}")
+    return {"images": [str(Path(p).resolve()) for p in (pngs or [])],
+            "bars": len(job.bars)}
 
 
 class SetBarsReq(BaseModel):
