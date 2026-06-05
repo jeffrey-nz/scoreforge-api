@@ -398,9 +398,26 @@ def get_warnings(job_id: str):
         for fl in f['flags']:
             by_sev[fl.get('sev', 'warn')] = by_sev.get(fl.get('sev', 'warn'), 0) + 1
             by_cat[fl.get('cat', 'other')] = by_cat.get(fl.get('cat', 'other'), 0) + 1
+
+    # Structural form checks (repeats / voltas). Correct music theory: a repeat-end
+    # needs somewhere to repeat to, and a 1st ending should pair with a 2nd.
+    structure = []
+    voltas = {b.get('volta') for b in job.bars if b.get('volta') in (1, 2)}
+    has_start = any(b.get('repeat_start') for b in job.bars)
+    has_end = any(b.get('repeat_end') for b in job.bars)
+    if 1 in voltas and 2 not in voltas:
+        structure.append('1st ending (volta 1) has no matching 2nd ending')
+    if 2 in voltas and 1 not in voltas:
+        structure.append('2nd ending (volta 2) has no matching 1st ending')
+    if voltas and not has_end:
+        structure.append('volta endings present but no repeat-end :| — the endings will never branch')
+    if has_end and not has_start:
+        structure.append('repeat-end :| with no repeat-begin |: — playback repeats from the first bar')
+
     return {'flagged': len(flagged), 'total': len(job.bars),
             'verified_flagged': verified_flagged,
             'by_severity': by_sev, 'by_category': by_cat,
+            'structure': structure,
             'bars': flagged, 'pages': page_checks}
 
 
@@ -409,6 +426,11 @@ class BarPatch(BaseModel):
     bass: Optional[str] = None
     melody2: Optional[str] = None
     bass2: Optional[str] = None
+    # Structural markers (musical form). repeat_start = |: at this bar's left,
+    # repeat_end = :| at its right, volta = 1st/2nd-ending number (1 or 2; 0 clears).
+    repeat_start: Optional[bool] = None
+    repeat_end: Optional[bool] = None
+    volta: Optional[int] = None
 
 
 @router.patch("/jobs/{job_id}/bars/{bar_n}")
@@ -420,6 +442,17 @@ def patch_bar(job_id: str, bar_n: int, patch: BarPatch):
         raise HTTPException(404, f"Bar {bar_n} not found")
     job.set_bar(bar_n, melody=patch.melody, bass=patch.bass,
                 melody2=patch.melody2, bass2=patch.bass2)
+    # Structural form markers (repeat barlines / volta endings).
+    if patch.repeat_start is not None:
+        bar['repeat_start'] = bool(patch.repeat_start)
+    if patch.repeat_end is not None:
+        bar['repeat_end'] = bool(patch.repeat_end)
+    if patch.volta is not None:
+        bar['volta'] = patch.volta if patch.volta in (1, 2) else None
+    # Re-validate the edited bar so its flags reflect the new notes immediately
+    # (set_bar only writes the strings). Without this an edit's flags stay stale.
+    from app.pipeline.steps import _recheck_bar
+    _recheck_bar(job, job.get_bar(bar_n))
     job.save()
     return job.get_bar(bar_n)
 

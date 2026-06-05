@@ -518,6 +518,7 @@ def _flag_severity(msg: str):
         ('leap', 'warn', 'leap'),
         ('expected range', 'warn', 'range'),
         ('may be missing', 'warn', 'gap'),
+        ('verify rhythm vs source', 'info', 'rhythm'),
         ('off the source reading', 'info', 'octave'),
         ('empty', 'warn', 'empty'),
         ('outside key', 'info', 'key'),
@@ -721,6 +722,20 @@ def _tok_midi(tok: str):
     return (int(m.group(3)) + 1) * 12 + pc
 
 
+_DUR_Q = {'w': 4.0, 'h': 2.0, 'q': 1.0, '8': 0.5, '16': 0.25, '32': 0.125, '64': 0.0625}
+
+
+def _tok_qlen(tok: str):
+    """A token's duration in quarter-beats (a trailing dot = ×1.5), or None."""
+    m = _VALID_TOK_RE.match(tok)
+    if not m:
+        return None
+    q = _DUR_Q.get(m.group(2))
+    if q is None:
+        return None
+    return q * 1.5 if m.group(3) == '.' else q
+
+
 def _check_bar_rules(bar: Dict, n_bars: int) -> List[str]:
     """Structural rule warnings to guide hand-correction. These catch the
     failure modes auto-transcription tends to produce: tokens the player can't
@@ -774,6 +789,18 @@ def _check_bar_rules(bar: Dict, n_bars: int) -> List[str]:
             leap = max((abs(b - a) for a, b in zip(midis, midis[1:])), default=0)
             if leap > 12:
                 issues.append(f'{track}: {leap}-semitone leap (> an octave) — check for a wrong note')
+        # 4b. Rhythm outlier: a NOTE far longer than the bar's fastest notes in a
+        #     bar that otherwise moves in sixteenths. Both a quarter that absorbed
+        #     the bar's slack and a dotted note that swallowed a rest read as VALID
+        #     rhythms (they still fill the bar), so the fill check passes them — but
+        #     against a sixteenth-run source they're almost always a mis-read
+        #     rest/length. (Caught bar 8: bass E2(q) + treble B4(8.).)
+        note_q = [q for q in (_tok_qlen(t) for t in toks if t[:1] not in 'Rr') if q]
+        if len(note_q) >= 2:
+            mn, mx = min(note_q), max(note_q)
+            if mn <= 0.25 + 1e-6 and mx >= mn * 3 - 1e-6:
+                issues.append(f'{track}: a note {round(mx / mn)}x longer than the 16ths around it '
+                              f'— verify rhythm vs source (a rest may be hidden in a dotted/over-long note)')
 
     # 5. Staff swap / voice crossing: if the whole melody sits below the whole
     #    bass, the two staves were almost certainly read into the wrong voices.
