@@ -1,0 +1,83 @@
+{
+  "_doc": "Provenance manifest: links each glyph reference object to REAL occurrences in transcribed music. Every sample is a PNG crop from a specific piece/page/system/bar, and (where a single note carries the symbol) the actual compact-format token it produced. This is the relationship between the reference library and the music itself — given a glyph you can find where it really appears, and given a transcribed token you can resolve its glyph. Image files live at app/core/glyph_images/<glyph_id>/<file>. To add a sample, drop the PNG and add an entry here.",
+  "version": 1,
+  "pieces": {
+    "fur_elise_p1": {"name": "Für Elise (WoO 59)", "composer": "Beethoven", "edition": "Breitkopf, Beethoven-Werke", "meter": "3/8", "key": "A minor"},
+    "kv545": {"name": "Piano Sonata No.16 in C, K.545", "composer": "Mozart", "edition": "Breitkopf, Mozarts Werke Serie 20", "movements": {"1": "Allegro (C / common time)", "2": "Andante (3/4)", "3": "Rondo. Allegretto (2/4)"}}
+  },
+  "samples": {
+    "clef-treble": [
+      {"file": "fur_elise.png", "piece": "fur_elise_p1", "page": 1, "system": 1, "bar": 1, "region": [495, 150, 615, 345], "maps_to": "top staff -> melody/melody2 voice"},
+      {"file": "k545_mvt1.png", "piece": "kv545", "movement": 1, "page": 1, "system": 2, "bar": 1, "region": [448, 485, 545, 625], "maps_to": "top staff -> melody/melody2 voice"}
+    ],
+    "clef-bass": [
+      {"file": "fur_elise.png", "piece": "fur_elise_p1", "page": 1, "system": 1, "bar": 1, "region": [495, 470, 628, 645], "maps_to": "bottom staff -> bass/bass2 voice"},
+      {"file": "k545_mvt2.png", "piece": "kv545", "movement": 2, "page": 4, "system": 1, "bar": 1, "region": [445, 498, 565, 618], "maps_to": "bottom staff -> bass/bass2 voice"}
+    ],
+    "brace": [
+      {"file": "fur_elise.png", "piece": "fur_elise_p1", "page": 1, "system": 1, "bar": 1, "region": [435, 150, 500, 645], "maps_to": "grand staff (implicit)"}
+    ],
+    "notehead-black": [
+      {"file": "fur_elise.png", "piece": "fur_elise_p1", "page": 1, "system": 1, "bar": 3, "region": [430, 200, 520, 280], "note": "A4", "maps_to": "A4(16)"}
+    ],
+    "flag-8th": [
+      {"file": "fur_elise.png", "piece": "fur_elise_p1", "page": 1, "system": 1, "bar": 3, "region": [48, 135, 150, 272], "note": "A4", "maps_to": "A4(8)"},
+      {"file": "k545_mvt3.png", "piece": "kv545", "movement": 3, "page": 7, "system": 1, "bar": 2, "region": [845, 308, 895, 432], "maps_to": "(8) — flagged eighth"}
+    ],
+    "beam-1": [
+      {"file": "k545_mvt3.png", "piece": "kv545", "movement": 3, "page": 7, "system": 1, "bar": 1, "region": [592, 277, 712, 432], "maps_to": "(8) (8) — two eighths under one beam (with staccato)"}
+    ],
+    "beam-2": [
+      {"file": "fur_elise.png", "piece": "fur_elise_p1", "page": 1, "system": 1, "bar": 2, "region": [250, 288, 470, 352], "maps_to": "(16) (16) ... — sixteenth run"}
+    ],
+    "rest-8th": [
+      {"file": "fur_elise.png", "piece": "fur_elise_p1", "page": 1, "system": 1, "bar": 3, "region": [345, 495, 435, 600], "note": "R", "maps_to": "R(8)"},
+      {"file": "k545_mvt3.png", "piece": "kv545", "movement": 3, "page": 7, "system": 1, "bar": 2, "region": [933, 356, 972, 406], "note": "R", "maps_to": "R(8)"}
+    ],
+    "notehead-half": [
+      {"file": "k545_mvt2.png", "piece": "kv545", "movement": 2, "page": 4, "system": 1, "bar": 1, "region": [614, 332, 657, 377], "maps_to": "C5(h) — hollow notehead = half note"}
+    ],
+    "slur": [
+      {"file": "k545_mvt2.png", "piece": "kv545", "movement": 2, "page": 4, "system": 1, "bar": 1, "region": [655, 277, 1102, 345], "maps_to": "phrasing (legato) over different pitches — not modelled"}
+    ],
+    "staccato": [
+      {"file": "k545_mvt3.png", "piece": "kv545", "movement": 3, "page": 7, "system": 1, "bar": 1, "region": [592, 280, 640, 352], "maps_to": "dot ABOVE a notehead = detached — not modelled (articulation)"}
+    ],
+    "ledger-line": [
+      {"file": "fur_elise.png", "piece": "fur_elise_p1", "page": 1, "system": 1, "bar": 3, "region": [205, 232, 405, 368], "maps_to": "short line below the staff -> low octave (implicit)"}
+    ],
+    "barline-single": [
+      {"file": "fur_elise.png", "piece": "fur_elise_p1", "page": 1, "system": 1, "bar": 1, "region": [935, 155, 982, 640], "maps_to": "bar boundary"}
+    ],
+    "barline-final": [
+      {"file": "k545_mvt3.png", "piece": "kv545", "movement": 3, "page": 8, "system": 6, "bar": -1, "region": [2762, 3170, 2824, 3545], "maps_to": "thin+thick line ending the piece"}
+    ],
+    "acc-sharp": [
+      {"file": "fur_elise.png", "piece": "fur_elise_p1", "page": 1, "system": 1, "bar": 2, "region": [792, 160, 852, 258], "note": "D#5", "maps_to": "D#5(16)"}
+    ],
+    "key-sig": [
+      {"file": "k545_mvt2.png", "piece": "kv545", "movement": 2, "page": 4, "system": 1, "bar": 1, "region": [508, 280, 548, 356], "note": "F#", "maps_to": "key G major (1 sharp on F)"}
+    ],
+    "time-sig-3-8": [
+      {"file": "fur_elise.png", "piece": "fur_elise_p1", "page": 1, "system": 1, "bar": 1, "region": [588, 150, 678, 310], "maps_to": "meter 3/8 (bar = 6 sixteenths)"}
+    ],
+    "time-sig-common": [
+      {"file": "k545_mvt1.png", "piece": "kv545", "movement": 1, "page": 1, "system": 2, "bar": 1, "region": [520, 505, 615, 600], "maps_to": "meter 4/4 / common time (bar = 16 sixteenths)"}
+    ],
+    "time-sig-3-4": [
+      {"file": "k545_mvt2.png", "piece": "kv545", "movement": 2, "page": 4, "system": 1, "bar": 1, "region": [518, 298, 608, 422], "maps_to": "meter 3/4 (bar = 12 sixteenths)"}
+    ],
+    "time-sig-2-4": [
+      {"file": "k545_mvt3.png", "piece": "kv545", "movement": 3, "page": 7, "system": 1, "bar": 1, "region": [502, 332, 588, 448], "maps_to": "meter 2/4 (bar = 8 sixteenths)"}
+    ],
+    "dyn-pp": [
+      {"file": "fur_elise.png", "piece": "fur_elise_p1", "page": 1, "system": 1, "bar": 1, "region": [682, 348, 842, 452], "maps_to": "velocity: very soft"}
+    ],
+    "dyn-p": [
+      {"file": "k545_mvt1.png", "piece": "kv545", "movement": 1, "page": 1, "system": 2, "bar": 1, "region": [585, 615, 660, 690], "maps_to": "velocity: soft"}
+    ],
+    "dyn-mf": [
+      {"file": "k545_mvt3.png", "piece": "kv545", "movement": 3, "page": 7, "system": 1, "bar": 1, "region": [555, 442, 646, 500], "maps_to": "velocity: medium-loud"}
+    ]
+  }
+}

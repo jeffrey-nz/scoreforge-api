@@ -28,7 +28,10 @@
     {"id": "acc-flat", "name": "Flat", "category": "accidental", "smufl": "accidentalFlat", "compact": "b after the letter, e.g. Bb4", "meaning": "Lower the pitch a semitone (Bb appears in the F-major B-section)."},
     {"id": "acc-natural", "name": "Natural", "category": "accidental", "smufl": "accidentalNatural", "compact": "plain letter (cancels a prior #/b in the bar)", "meaning": "Cancel a previous accidental."},
 
-    {"id": "time-sig", "name": "Time signature", "category": "meta", "smufl": "timeSig3", "compact": "job/bar meta timeSig, e.g. 3/8", "meaning": "Beats per bar over the beat unit. Drives the bar-fill check (a 3/8 bar = 6 sixteenths)."},
+    {"id": "time-sig-common", "name": "Common time (C = 4/4)", "category": "meta", "smufl": "timeSigCommon", "compact": "meta timeSig 4/4", "meaning": "The 'C' glyph = 4/4 (four quarter-beats). A 4/4 bar = 16 sixteenths. Mozart K.545 mvt I (Allegro)."},
+    {"id": "time-sig-2-4", "name": "Time signature 2/4", "category": "meta", "smufl": "timeSig2over4", "compact": "meta timeSig 2/4", "meaning": "Two quarter-beats per bar. A 2/4 bar = 8 sixteenths. Mozart K.545 mvt III (Rondo)."},
+    {"id": "time-sig-3-4", "name": "Time signature 3/4", "category": "meta", "smufl": "timeSig3over4", "compact": "meta timeSig 3/4", "meaning": "Three quarter-beats per bar. A 3/4 bar = 12 sixteenths. Mozart K.545 mvt II (Andante)."},
+    {"id": "time-sig-3-8", "name": "Time signature 3/8", "category": "meta", "smufl": "timeSig3over8", "compact": "meta timeSig 3/8", "meaning": "Three eighth-beats per bar. A 3/8 bar = 6 sixteenths (1.5 quarter-beats). Beethoven Für Elise."},
     {"id": "key-sig", "name": "Key signature", "category": "meta", "smufl": "keySignature", "compact": "job/bar meta key, e.g. A minor", "meaning": "Sharps/flats applied throughout; drives the key-fit check."},
 
     {"id": "barline-single", "name": "Barline", "category": "structure", "smufl": "barlineSingle", "compact": "separates bars (each bar = one entry)", "meaning": "Measure boundary. Detected mechanically to segment systems into bars."},
@@ -41,6 +44,8 @@
     {"id": "ledger-line", "name": "Ledger line", "category": "structure", "smufl": "legerLine", "compact": "(implicit: high/low octave)", "meaning": "Short line extending the staff for notes above/below it (e.g. the E6 in the consequent)."},
 
     {"id": "dyn-pp", "name": "Pianissimo (pp)", "category": "dynamic", "smufl": "dynamicPP", "compact": "(not modelled — velocity)", "meaning": "Very soft. Für Elise opens pp."},
+    {"id": "dyn-p", "name": "Piano (p)", "category": "dynamic", "smufl": "dynamicPiano", "compact": "(not modelled — velocity)", "meaning": "Soft. Mozart K.545 mvt I opens p (p dolce)."},
+    {"id": "dyn-mf", "name": "Mezzo-forte (mf)", "category": "dynamic", "smufl": "dynamicMF", "compact": "(not modelled — velocity)", "meaning": "Medium-loud. Mozart K.545 mvt III (Rondo) opens mf."},
     {"id": "dyn-ff", "name": "Fortissimo (ff)", "category": "dynamic", "smufl": "dynamicFF", "compact": "(not modelled — velocity)", "meaning": "Very loud."},
     {"id": "pedal", "name": "Sustain pedal (Ped. / *)", "category": "dynamic", "smufl": "keyboardPedalPed", "compact": "(not modelled)", "meaning": "Press (Ped.) / release (*) the sustain pedal."},
 
