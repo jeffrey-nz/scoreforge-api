@@ -1152,7 +1152,9 @@ def _check_rhythm_bar(bar: Dict, bar_ticks: float, allow_short: bool = False) ->
         ratio = total / bar_ticks
         if ratio > 1.35:
             issues.append(f'{track} fills {int(ratio * 100)}% of bar (over a full measure)')
-        elif ratio < 0.72 and not allow_short:
+        elif ratio < 0.92 and not allow_short:
+            # In strict meter every voice fills the bar; a present-but-short voice
+            # means an omitted note or rest (e.g. a missing 16th -> 83%).
             issues.append(f'{track} fills {int(ratio * 100)}% of bar (expected ~100%)')
 
     return issues
