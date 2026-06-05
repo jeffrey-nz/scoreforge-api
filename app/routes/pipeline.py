@@ -737,6 +737,48 @@ async def set_bars(job_id: str, req: SetBarsReq):
     return {"ok": True, "bars": len(job.bars), "crops": n_crops}
 
 
+class ImportOmrReq(BaseModel):
+    page: int
+    musicxml: str          # path to a oemer MusicXML file
+
+
+@router.post("/jobs/{job_id}/import-omr")
+async def import_omr(job_id: str, req: ImportOmrReq):
+    """Fill one page's bars from a oemer MusicXML (converted via omer_import).
+    Measures map 1:1, in order, onto that page's existing bars — preserving each
+    bar's page/sys; only melody/bass are overwritten. Mechanical pitch recovery;
+    the rule-checks then flag bars whose rhythm/octave still need a fix."""
+    job = _require_job(job_id)
+    import sys as _sys
+    from app.config import CORE_DIR
+    if str(CORE_DIR) not in _sys.path:
+        _sys.path.insert(0, str(CORE_DIR))
+    from omer_import import musicxml_to_bars, fit_to_meter, meter_quarters
+    from app.pipeline.steps import _recheck_all_bars
+    if not Path(req.musicxml).exists():
+        raise HTTPException(404, f"musicxml not found: {req.musicxml}")
+    measures = musicxml_to_bars(req.musicxml)
+    meter_q = meter_quarters((job.meta or {}).get('timeSig', '4/4'))
+    page_bars = [b for b in job.bars if int(b.get('page') or 1) == req.page]
+    n = min(len(measures), len(page_bars))
+    for i in range(n):
+        # oemer pitch sequence (reliable) re-quantised to the meter (its rhythm
+        # is not reliable here); review then fixes the inner rhythm/octaves.
+        page_bars[i]['melody'] = fit_to_meter(measures[i].get('melody', ''), meter_q)
+        page_bars[i]['bass'] = fit_to_meter(measures[i].get('bass', ''), meter_q)
+    _recheck_all_bars(job)
+    job.save()
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: generate_bar_crops(job))
+    except Exception:
+        pass
+    await job.emit('bars_updated', {'bars': job.bars, 'pages': job.pages, 'meta': job.meta})
+    return {"ok": True, "page": req.page, "measures": len(measures),
+            "page_bars": len(page_bars), "filled": n,
+            "mismatch": len(measures) != len(page_bars)}
+
+
 @router.post("/jobs/{job_id}/crops")
 async def regenerate_crops(job_id: str):
     """(Re)generate per-bar source crops for a job — handy for operator jobs

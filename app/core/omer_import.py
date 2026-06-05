@@ -8,22 +8,19 @@ source crop and fixes whatever the recogniser got wrong.
 from __future__ import annotations
 from typing import List, Dict
 
-# quarterLength -> our duration tag (no dot); dotted handled separately
-_BASE = [(4.0, 'w'), (2.0, 'h'), (1.0, 'q'), (0.5, '8'), (0.25, '16'),
-         (0.125, '32'), (0.0625, '64')]
+# music21 duration.type -> our compact tag. We key off the *type* (note shape),
+# not quarterLength: oemer emits no time signature, so music21 assumes 4/4 and
+# mangles quarterLengths, but the engraved note shapes (16th/eighth/...) survive.
+_TYPE_TAG = {'whole': 'w', 'half': 'h', 'quarter': 'q', 'eighth': '8',
+             '16th': '16', '32nd': '32', '64th': '64'}
+# Rests this long in a sub-quarter meter are oemer's 4/4 padding, not real rests.
+_PAD_REST_QL = 1.0
 
 
-def _dur_tag(ql: float) -> str:
-    """Nearest compact duration tag for a quarter-length, with a dot if it is
-    ~1.5x a base value."""
-    best = None
-    for base, tag in _BASE:
-        for dotted, suffix in ((1.0, ''), (1.5, '.')):
-            val = base * dotted
-            err = abs(ql - val) / val
-            if best is None or err < best[0]:
-                best = (err, tag + suffix)
-    return best[1]
+def _dur_tag(el) -> str:
+    """Compact duration tag from a music21 element's note *type* + dots."""
+    tag = _TYPE_TAG.get(el.duration.type, '16')
+    return tag + ('.' if getattr(el.duration, 'dots', 0) else '')
 
 
 def _name(p) -> str:
@@ -31,9 +28,46 @@ def _name(p) -> str:
     return p.nameWithOctave.replace('-', 'b')
 
 
-def musicxml_to_bars(path: str) -> List[Dict]:
+_QL_SNAP = [(4.0, 'w'), (3.0, 'h.'), (2.0, 'h'), (1.5, 'q.'), (1.0, 'q'),
+            (0.75, '8.'), (0.5, '8'), (0.375, '16.'), (0.25, '16'), (0.125, '32')]
+
+
+def _ql_to_tag(ql: float) -> str:
+    return min(_QL_SNAP, key=lambda bt: abs(bt[0] - ql))[1]
+
+
+def meter_quarters(timesig: str) -> float:
+    try:
+        n, d = (int(x) for x in str(timesig).split('/'))
+        return n * 4 / d
+    except Exception:
+        return 4.0
+
+
+def fit_to_meter(token_str: str, meter_q: float) -> str:
+    """Re-quantise a bar to its meter using oemer's (reliable) PITCH sequence but
+    NOT its (unreliable) durations: drop rests, lay the notes as 16ths, and if
+    they under-fill, lengthen the first (downbeat) note to absorb the slack — so
+    runs come out as exact 16ths and held-note bars get a long downbeat + 16ths.
+    A pragmatic playable default; exact inner rhythm is then a review fix."""
+    pitches = [t.split('(')[0] for t in token_str.split() if not t[:2].upper().startswith('R')]
+    n = len(pitches)
+    if n == 0:
+        return ''
+    base = 0.25
+    if n * base <= meter_q + 1e-6:
+        durs = [base] * n
+        durs[0] += meter_q - n * base          # held downbeat absorbs the slack
+    else:
+        durs = [meter_q / n] * n               # denser than 16ths: split evenly
+    return ' '.join(f'{p}({_ql_to_tag(d)})' for p, d in zip(pitches, durs))
+
+
+def musicxml_to_bars(path: str, drop_pad_rests: bool = True) -> List[Dict]:
     """Return [{'melody','bass'}] per measure (treble part -> melody, bass part
     -> bass). Chords reduce to their top note in the treble, bottom in the bass.
+    Padding rests (a quarter or longer, from oemer's 4/4 assumption) are dropped
+    so the recovered bars hold just the engraved notes for review against meter.
     """
     import music21 as m21
     score = m21.converter.parse(path)
@@ -46,15 +80,15 @@ def musicxml_to_bars(path: str) -> List[Dict]:
     def voice_tokens(measure, pick_top: bool) -> str:
         toks = []
         for el in measure.notesAndRests:
-            tag = _dur_tag(float(el.quarterLength) or 0.25)
             if el.isRest:
-                toks.append(f'R({tag})')
+                if drop_pad_rests and float(el.quarterLength) >= _PAD_REST_QL:
+                    continue                       # skip 4/4-padding rest
+                toks.append(f'R({_dur_tag(el)})')
             elif el.isChord:
                 ps = sorted(el.pitches, key=lambda p: p.midi)
-                p = ps[-1] if pick_top else ps[0]
-                toks.append(f'{_name(p)}({tag})')
+                toks.append(f'{_name(ps[-1] if pick_top else ps[0])}({_dur_tag(el)})')
             else:
-                toks.append(f'{_name(el.pitch)}({tag})')
+                toks.append(f'{_name(el.pitch)}({_dur_tag(el)})')
         return ' '.join(toks)
 
     t_meas = list(treble.getElementsByClass('Measure'))

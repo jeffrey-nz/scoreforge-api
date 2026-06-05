@@ -13,3 +13,6 @@ uploads/
 
 # Persistent AI-response cache (machine-local)
 .cache/
+
+# OMR working data (downscaled pages, oemer MusicXML, logs)
+_omr/
