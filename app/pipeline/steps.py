@@ -520,10 +520,12 @@ def _recheck_bar(job: Job, bar: Dict):
     bn = bar.get('n')
     p = _check_pitch_bar(bar, key_pcs)
     r = _check_rhythm_bar(bar, bar_ticks, allow_short=(bn == 1 or bn == n_bars))
+    s = _check_bar_rules(bar, n_bars)
     bar['pitch_issues'] = p
     bar['rhythm_issues'] = r
-    bar['issues'] = p + r
-    bar['confidence'] = 1.0 if not (p + r) else (0.5 if len(p + r) <= 2 else 0.2)
+    all_issues = p + r + s
+    bar['issues'] = all_issues
+    bar['confidence'] = 1.0 if not all_issues else (0.5 if len(all_issues) <= 2 else 0.2)
     return bar
 
 
@@ -663,6 +665,77 @@ def _check_pitch_bar(bar: Dict, key_pcs: Optional[set]) -> List[str]:
         far = [n for n in notes if n < band[0] - 12 or n > band[1] + 12]
         if far:
             issues.append(f'{track}: {len(far)} note(s) outside expected range')
+
+    return issues
+
+
+# A single valid compact token: pitch+octave or rest, with a known duration tag.
+_VALID_TOK_RE = re.compile(r'^([A-Ga-g][#b]?-?\d+|[Rr])\((w|h|q|8|16|32|64)(\.?)\)$')
+_STEP_PC = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
+
+
+def _tok_midi(tok: str):
+    """MIDI number for a token's pitch, or None for rests/garbage."""
+    m = re.match(r'^([A-Ga-g])([#b]?)(-?\d+)\(', tok)
+    if not m:
+        return None
+    pc = _STEP_PC[m.group(1).upper()]
+    if m.group(2) == '#':
+        pc += 1
+    elif m.group(2) == 'b':
+        pc -= 1
+    return (int(m.group(3)) + 1) * 12 + pc
+
+
+def _check_bar_rules(bar: Dict, n_bars: int) -> List[str]:
+    """Structural rule warnings to guide hand-correction. These catch the
+    failure modes auto-transcription tends to produce: tokens the player can't
+    parse, octave drops (treble voice written in the bass register), the same
+    pitch repeated many times (a detection stutter), and empty interior bars.
+    Returns a list of human-readable warning strings."""
+    issues: List[str] = []
+    bn = bar.get('n')
+    is_edge = (bn == 1 or bn == n_bars)
+    any_notes = False
+
+    for track in ('melody', 'melody2', 'bass', 'bass2'):
+        raw = str(bar.get(track, '') or '').strip()
+        if not raw or raw.lower() in ('(empty)', 'empty'):
+            continue
+        toks = raw.split()
+        # 1. Unparseable tokens — the player silently drops these, so they are
+        #    a common source of "a note went missing".
+        bad = [t for t in toks if not _VALID_TOK_RE.match(t)]
+        if bad:
+            issues.append(f"{track}: invalid token(s) {', '.join(bad[:3])}"
+                          + (f" (+{len(bad)-3} more)" if len(bad) > 3 else ""))
+        midis = [m for m in (_tok_midi(t) for t in toks) if m is not None]
+        if midis:
+            any_notes = True
+        # 2. Octave sanity per staff. Treble voices below G3 (55) are almost
+        #    always an octave-drop; bass voices above C5 (72) likewise.
+        if track in ('melody', 'melody2'):
+            low = [m for m in midis if m < 55]
+            if low:
+                issues.append(f'{track}: {len(low)} note(s) below G3 — likely octave too low')
+        else:
+            high = [m for m in midis if m > 72]
+            if high:
+                issues.append(f'{track}: {len(high)} note(s) above C5 — likely octave too high')
+        # 3. Repeated-note stutter on a MELODY voice: a tune rarely hammers one
+        #    pitch 5+ times — that pattern is a detector artifact. (A bass pedal
+        #    legitimately repeats, so this check is treble-only.)
+        if track in ('melody', 'melody2') and len(midis) >= 5:
+            run = best = 1
+            for a, b in zip(midis, midis[1:]):
+                run = run + 1 if a == b else 1
+                best = max(best, run)
+            if best >= 5:
+                issues.append(f'{track}: {best} identical notes in a row — check for a stutter')
+
+    # 4. A wholly empty interior bar usually means a measure was skipped.
+    if not any_notes and not is_edge:
+        issues.append('bar is empty — a measure may be missing')
 
     return issues
 
@@ -867,9 +940,10 @@ def generate_bar_crops(job: Job) -> int:
         except Exception:
             strips = [png]
 
-        # Collect every (strip, x1, x2) bar-slot across the page's systems, in
-        # reading order, from detected barlines (whole strip if none found).
-        boxes = []
+        # Per-system bar slots: detected barlines split each strip into measures.
+        # Keyed by system index (1-based) so bars tagged with their system align
+        # 1:1 within that system instead of drifting across the whole page.
+        sys_boxes = []          # list parallel to strips: each a list of (strip,x1,x2)
         for strip in strips:
             try:
                 positions = atr._detect_barline_positions(strip)
@@ -878,28 +952,59 @@ def generate_bar_crops(job: Job) -> int:
             try:
                 w = Image.open(strip).width
             except Exception:
+                sys_boxes.append([])
                 continue
+            sb = []
             if positions and len(positions) >= 2:
                 for i in range(len(positions) - 1):
-                    boxes.append((strip, max(0, positions[i] - 5), min(w, positions[i + 1] + 5)))
+                    sb.append((strip, max(0, positions[i] - 5), min(w, positions[i + 1] + 5)))
             else:
-                boxes.append((strip, 0, w))
+                sb.append((strip, 0, w))
+            sys_boxes.append(sb)
+        flat_boxes = [b for sb in sys_boxes for b in sb]
 
-        nb, nbox = len(pbars), len(boxes)
-        for idx, bar in enumerate(pbars):
-            if not nbox:
-                break
-            # 1:1 when counts match, else map proportionally (best effort —
-            # operator bars may not line up exactly with detected barlines).
-            bi = idx if nb == nbox else min(nbox - 1, round(idx * nbox / max(1, nb)))
-            strip, x1, x2 = boxes[bi]
+        # If bars carry a 1-based `sys` tag, crop within that system (robust to
+        # per-page count drift); else fall back to whole-page proportional map.
+        have_sys = all(b.get('sys') for b in pbars) and len(strips) > 0
+
+        def _save(bar, box):
+            nonlocal written
+            strip, x1, x2 = box
             try:
                 im = Image.open(strip)
-                im.crop((x1, 0, x2, im.height)).save(
-                    str(pages_dir / f"page_{pg:02d}_bar_{bar['n']:03d}.png"))
+                crop_path = pages_dir / f"page_{pg:02d}_bar_{bar['n']:03d}.png"
+                im.crop((x1, 0, x2, im.height)).save(str(crop_path))
                 written += 1
+                # Mechanical reading aid: a pitch-labelled staff grid overlay.
+                try:
+                    import omr
+                    omr.annotate_grid(str(crop_path),
+                                      str(crop_path.with_name(crop_path.stem + '_grid.png')))
+                except Exception:
+                    pass
             except Exception:
                 pass
+
+        if have_sys:
+            from collections import OrderedDict as _OD
+            by_sys = _OD()
+            for b in pbars:
+                by_sys.setdefault(int(b['sys']), []).append(b)
+            for s_idx, sbars in by_sys.items():
+                sb = sys_boxes[s_idx - 1] if 1 <= s_idx <= len(sys_boxes) else flat_boxes
+                if not sb:
+                    continue
+                nb, nbox = len(sbars), len(sb)
+                for idx, bar in enumerate(sbars):
+                    bi = idx if nb == nbox else min(nbox - 1, round(idx * nbox / max(1, nb)))
+                    _save(bar, sb[bi])
+        else:
+            nb, nbox = len(pbars), len(flat_boxes)
+            for idx, bar in enumerate(pbars):
+                if not nbox:
+                    break
+                bi = idx if nb == nbox else min(nbox - 1, round(idx * nbox / max(1, nb)))
+                _save(bar, flat_boxes[bi])
 
         manifest_pages.append({'file': f'page_{pg:02d}.png', 'page': pg,
                                'startBar': pbars[0]['n'], 'endBar': pbars[-1]['n'],

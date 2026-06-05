@@ -340,6 +340,62 @@ def get_bars(job_id: str):
     return _require_job(job_id).bars
 
 
+@router.get("/jobs/{job_id}/warnings")
+def get_warnings(job_id: str):
+    """A fix-queue: every bar that breaks a rule, plus a per-page check that the
+    transcribed bar count matches the measures detected on the source page.
+    Drives both the dashboard's review flags and Claude-driven cleanup."""
+    job = _require_job(job_id)
+    from app.pipeline.steps import _recheck_all_bars
+    _recheck_all_bars(job)
+    flagged = [{'n': b['n'], 'page': b.get('page'), 'sys': b.get('sys'),
+                'issues': b.get('issues', [])}
+               for b in job.bars if b.get('issues')]
+
+    # Per-page segmentation drift: detect measures on each source page and
+    # compare to how many bars were transcribed for it.
+    page_checks = []
+    try:
+        import sys as _sys
+        from app.config import CORE_DIR
+        if str(CORE_DIR) not in _sys.path:
+            _sys.path.insert(0, str(CORE_DIR))
+        import ai_transcribe as atr
+        from PIL import Image
+        from collections import OrderedDict
+        by_page = OrderedDict()
+        for b in job.bars:
+            by_page.setdefault(int(b.get('page') or 1), []).append(b)
+        pages_dir = job.out_dir / '_pages'
+        for pg, pbars in by_page.items():
+            png = pages_dir / f'page_{pg:02d}.png'
+            detected = None
+            if png.exists():
+                try:
+                    strips = atr._split_page_into_systems(png, pages_dir, pg) or [png]
+                    detected = 0
+                    for s in strips:
+                        pos = atr._detect_barline_positions(s)
+                        detected += (len(pos) - 1) if pos and len(pos) >= 2 else 1
+                except Exception:
+                    detected = None
+            entry = {'page': pg, 'bars': len(pbars), 'detected_measures': detected}
+            if detected is not None and abs(detected - len(pbars)) >= 2:
+                entry['warning'] = (f'page {pg}: {len(pbars)} bars transcribed but '
+                                    f'~{detected} measures detected — segmentation may drift')
+            page_checks.append(entry)
+    except Exception as e:
+        page_checks = [{'error': str(e)}]
+
+    by_cat: Dict[str, int] = {}
+    for f in flagged:
+        for iss in f['issues']:
+            cat = iss.split(':')[0] if ':' in iss else iss.split(' ')[0]
+            by_cat[cat] = by_cat.get(cat, 0) + 1
+    return {'flagged': len(flagged), 'total': len(job.bars),
+            'by_category': by_cat, 'bars': flagged, 'pages': page_checks}
+
+
 class BarPatch(BaseModel):
     melody: Optional[str] = None
     bass: Optional[str] = None
@@ -383,6 +439,21 @@ def get_bar_crop(job_id: str, bar_n: int):
     if not crop or not Path(crop).exists():
         raise HTTPException(404, "No source crop for this bar")
     return FileResponse(str(crop), media_type='image/png')
+
+
+@router.get("/jobs/{job_id}/bars/{bar_n}/grid")
+def get_bar_grid(job_id: str, bar_n: int):
+    """Source crop overlaid with a pitch-labelled staff grid — a mechanical
+    reading aid (read pitch off the label instead of counting ledger lines)."""
+    job = _require_job(job_id)
+    if job.get_bar(bar_n) is None:
+        raise HTTPException(404, f"Bar {bar_n} not found")
+    crop = bar_crop_path(job, bar_n)
+    if crop:
+        grid = Path(crop).with_name(Path(crop).stem + '_grid.png')
+        if grid.exists():
+            return FileResponse(str(grid), media_type='image/png')
+    raise HTTPException(404, "No grid for this bar")
 
 
 class VerifyReq(BaseModel):
@@ -632,7 +703,7 @@ async def set_bars(job_id: str, req: SetBarsReq):
     for i, b in enumerate(req.bars, 1):
         if not isinstance(b, dict):
             continue
-        norm.append({'n': b.get('n', i), 'page': b.get('page'),
+        norm.append({'n': b.get('n', i), 'page': b.get('page'), 'sys': b.get('sys'),
                      'melody': b.get('melody', '') or '', 'bass': b.get('bass', '') or '',
                      'melody2': b.get('melody2', '') or '', 'bass2': b.get('bass2', '') or '',
                      'issues': [], 'pitch_issues': [], 'rhythm_issues': [],

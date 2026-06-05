@@ -258,7 +258,31 @@ def _detect_barline_positions(strip_png):
         cur.append(b)
     groups.append(cur)
     centres = [sum(g) // len(g) for g in groups]
-    return centres if len(centres) >= 2 else None
+    # Merge only centres a hair apart — a barline drawn thick or doubled spans
+    # ~20-30px, whereas the narrowest real measure is far wider. (Earlier this
+    # used 8% of the width, which wrongly swallowed close volta measures.)
+    min_gap = max(35, int(W * 0.012))
+    merged = [centres[0]]
+    for c in centres[1:]:
+        if c - merged[-1] < min_gap:
+            merged[-1] = (merged[-1] + c) // 2
+        else:
+            merged.append(c)
+    if len(merged) < 2:
+        return None
+    # Recover missed barlines: a measure far wider than the typical one almost
+    # always hides a faint barline the projection didn't catch. Split any gap
+    # above ~1.7x the median into equal pieces so the measure count is right.
+    gaps = [merged[i + 1] - merged[i] for i in range(len(merged) - 1)]
+    med = sorted(gaps)[len(gaps) // 2]
+    out = [merged[0]]
+    for i, g in enumerate(gaps):
+        if med > 0 and g > med * 1.7:
+            parts = int(round(g / med))
+            for k in range(1, parts):
+                out.append(merged[i] + g * k // parts)
+        out.append(merged[i + 1])
+    return out
 
 
 def _detect_barlines(strip_png):
