@@ -518,6 +518,7 @@ def _flag_severity(msg: str):
         ('leap', 'warn', 'leap'),
         ('expected range', 'warn', 'range'),
         ('may be missing', 'warn', 'gap'),
+        ('off the source reading', 'info', 'octave'),
         ('empty', 'warn', 'empty'),
         ('outside key', 'info', 'key'),
     ]
@@ -789,6 +790,16 @@ def _check_bar_rules(bar: Dict, n_bars: int) -> List[str]:
         have = sum(len(v) for v in midis_by_track.values())
         if have < src - 1:
             issues.append(f'{have} notes but the source had ~{src} — a note may be missing')
+
+    # 7. Octave vs the original: if the melody's register sits ~an octave off the
+    #    OMR's reading of this bar, an octave was likely overridden (a memory-based
+    #    "it should be higher" beats what the source actually shows).
+    src_reg = bar.get('src_reg')
+    mel_mids = sorted(midis_by_track.get('melody', []))
+    if isinstance(src_reg, (int, float)) and mel_mids:
+        cur = mel_mids[len(mel_mids) // 2]
+        if abs(cur - src_reg) >= 9:
+            issues.append(f'melody is ~{round(abs(cur - src_reg) / 12.0, 1)} octave off the source reading — check octave')
 
     # 4. A wholly empty interior bar usually means a measure was skipped.
     if not any_notes and not is_edge:
