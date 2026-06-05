@@ -769,11 +769,17 @@ async def import_omr(job_id: str, req: ImportOmrReq):
     meter_q = meter_quarters((job.meta or {}).get('timeSig', '4/4'))
     page_bars = [b for b in job.bars if int(b.get('page') or 1) == req.page]
     n = min(len(measures), len(page_bars))
+    def _src_count(meas):
+        toks = (meas.get('melody', '') + ' ' + meas.get('bass', '')).split()
+        return sum(1 for t in toks if t and not t[:2].upper().startswith('R'))
     for i in range(n):
         # oemer pitch sequence (reliable) re-quantised to the meter (its rhythm
         # is not reliable here); review then fixes the inner rhythm/octaves.
         page_bars[i]['melody'] = fit_to_meter(measures[i].get('melody', ''), meter_q)
         page_bars[i]['bass'] = fit_to_meter(measures[i].get('bass', ''), meter_q)
+        # Remember how many notes the source (OMR) had here, so the checker can
+        # later flag a bar that ends up with fewer notes than the original.
+        page_bars[i]['src_notes'] = _src_count(measures[i])
     _recheck_all_bars(job)
     job.save()
     try:

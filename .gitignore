@@ -16,3 +16,6 @@ uploads/
 
 # OMR working data (downscaled pages, oemer MusicXML, logs)
 _omr/
+
+# Glyph library user data (collected/unidentified glyphs + images)
+app/data/

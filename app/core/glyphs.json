@@ -1,0 +1,50 @@
+{
+  "_doc": "Reference catalogue of music-notation glyphs and how each maps to our compact note format (Pitch+Octave(Duration), e.g. C5(8), R(16), D#4(q.)). `compact` is the AI-friendly handle: how the glyph shows up in a bar's note string. `smufl` is the Standard Music Font Layout name. Status 'known' = catalogued; user-added unidentified glyphs live in the data dir with status 'unidentified'.",
+  "version": 1,
+  "glyphs": [
+    {"id": "clef-treble", "name": "Treble (G) clef", "category": "clef", "smufl": "gClef", "compact": "top staff = melody/melody2 tracks", "meaning": "Pitches read in the treble register; our melody voice."},
+    {"id": "clef-bass", "name": "Bass (F) clef", "category": "clef", "smufl": "fClef", "compact": "bottom staff = bass/bass2 tracks", "meaning": "Pitches read in the bass register; our bass voice. NB: in some passages the left hand is written in a treble clef and plays high."},
+
+    {"id": "notehead-black", "name": "Filled notehead", "category": "notehead", "smufl": "noteheadBlack", "compact": "any pitched token with duration q or shorter, e.g. C5(8)", "meaning": "A quarter note or shorter (duration set by stem/flags/beams)."},
+    {"id": "notehead-half", "name": "Hollow notehead (with stem)", "category": "notehead", "smufl": "noteheadHalf", "compact": "C5(h)", "meaning": "A half note (2 quarter-beats)."},
+    {"id": "notehead-whole", "name": "Whole note", "category": "notehead", "smufl": "noteheadWhole", "compact": "C5(w)", "meaning": "A whole note (4 quarter-beats); no stem."},
+
+    {"id": "stem", "name": "Stem", "category": "duration", "smufl": "stem", "compact": "(implicit)", "meaning": "Vertical line on a notehead; presence means quarter or shorter. Stem direction is engraving, not pitch."},
+    {"id": "flag-8th", "name": "Eighth flag", "category": "duration", "smufl": "flag8thUp", "compact": "(8)", "meaning": "One flag on an unbeamed stem = eighth note."},
+    {"id": "flag-16th", "name": "Sixteenth flag", "category": "duration", "smufl": "flag16thUp", "compact": "(16)", "meaning": "Two flags = sixteenth note."},
+    {"id": "beam-1", "name": "Single beam", "category": "duration", "smufl": "beam", "compact": "(8) (8) ...", "meaning": "One beam joining stems = eighth notes."},
+    {"id": "beam-2", "name": "Double beam", "category": "duration", "smufl": "beam", "compact": "(16) (16) ...", "meaning": "Two beams = sixteenth notes (the Für Elise runs)."},
+    {"id": "beam-3", "name": "Triple beam", "category": "duration", "smufl": "beam", "compact": "(32) (32) ...", "meaning": "Three beams = thirty-second notes (fast run-backs)."},
+    {"id": "aug-dot", "name": "Augmentation dot", "category": "duration", "smufl": "augmentationDot", "compact": ". suffix, e.g. A4(q.) or C5(8.)", "meaning": "Dot to the right of a notehead/rest = 1.5x its duration."},
+
+    {"id": "rest-whole", "name": "Whole rest", "category": "rest", "smufl": "restWhole", "compact": "R(w)", "meaning": "Silence for a whole note (hangs under a staff line)."},
+    {"id": "rest-half", "name": "Half rest", "category": "rest", "smufl": "restHalf", "compact": "R(h)", "meaning": "Silence for a half note (sits on a staff line)."},
+    {"id": "rest-quarter", "name": "Quarter rest", "category": "rest", "smufl": "restQuarter", "compact": "R(q)", "meaning": "Silence for a quarter note (the squiggle)."},
+    {"id": "rest-8th", "name": "Eighth rest", "category": "rest", "smufl": "rest8th", "compact": "R(8)", "meaning": "Silence for an eighth (one hook)."},
+    {"id": "rest-16th", "name": "Sixteenth rest", "category": "rest", "smufl": "rest16th", "compact": "R(16)", "meaning": "Silence for a sixteenth (two hooks). Common after the eighth in the Für Elise answer figure."},
+    {"id": "rest-32nd", "name": "Thirty-second rest", "category": "rest", "smufl": "rest32nd", "compact": "R(32)", "meaning": "Silence for a thirty-second (three hooks)."},
+
+    {"id": "acc-sharp", "name": "Sharp", "category": "accidental", "smufl": "accidentalSharp", "compact": "# after the letter, e.g. D#5, G#3", "meaning": "Raise the pitch a semitone (D# is the Für Elise signature note)."},
+    {"id": "acc-flat", "name": "Flat", "category": "accidental", "smufl": "accidentalFlat", "compact": "b after the letter, e.g. Bb4", "meaning": "Lower the pitch a semitone (Bb appears in the F-major B-section)."},
+    {"id": "acc-natural", "name": "Natural", "category": "accidental", "smufl": "accidentalNatural", "compact": "plain letter (cancels a prior #/b in the bar)", "meaning": "Cancel a previous accidental."},
+
+    {"id": "time-sig", "name": "Time signature", "category": "meta", "smufl": "timeSig3", "compact": "job/bar meta timeSig, e.g. 3/8", "meaning": "Beats per bar over the beat unit. Drives the bar-fill check (a 3/8 bar = 6 sixteenths)."},
+    {"id": "key-sig", "name": "Key signature", "category": "meta", "smufl": "keySignature", "compact": "job/bar meta key, e.g. A minor", "meaning": "Sharps/flats applied throughout; drives the key-fit check."},
+
+    {"id": "barline-single", "name": "Barline", "category": "structure", "smufl": "barlineSingle", "compact": "separates bars (each bar = one entry)", "meaning": "Measure boundary. Detected mechanically to segment systems into bars."},
+    {"id": "barline-final", "name": "Final barline", "category": "structure", "smufl": "barlineFinal", "compact": "end of piece", "meaning": "Thin+thick line ending the piece."},
+    {"id": "repeat-barline", "name": "Repeat barline", "category": "structure", "smufl": "repeatRight", "compact": "(not yet modelled — expand the repeat when transcribing)", "meaning": "Two dots + thick line: repeat the enclosed section."},
+    {"id": "volta", "name": "Volta bracket (1. / 2.)", "category": "structure", "smufl": "ottavaBracket", "compact": "(not yet modelled — take the through-path / 2nd ending)", "meaning": "First/second endings for a repeat."},
+    {"id": "brace", "name": "Brace", "category": "structure", "smufl": "brace", "compact": "(implicit: grand staff)", "meaning": "Joins the treble+bass staves into one piano grand staff."},
+    {"id": "tie", "name": "Tie", "category": "structure", "smufl": "tie", "compact": "(not yet modelled — sum the durations)", "meaning": "Curved line joining two notes of the SAME pitch into one sustained note."},
+    {"id": "slur", "name": "Slur", "category": "structure", "smufl": "slur", "compact": "(not modelled — phrasing only)", "meaning": "Curved line over DIFFERENT pitches = play legato."},
+    {"id": "ledger-line", "name": "Ledger line", "category": "structure", "smufl": "legerLine", "compact": "(implicit: high/low octave)", "meaning": "Short line extending the staff for notes above/below it (e.g. the E6 in the consequent)."},
+
+    {"id": "dyn-pp", "name": "Pianissimo (pp)", "category": "dynamic", "smufl": "dynamicPP", "compact": "(not modelled — velocity)", "meaning": "Very soft. Für Elise opens pp."},
+    {"id": "dyn-ff", "name": "Fortissimo (ff)", "category": "dynamic", "smufl": "dynamicFF", "compact": "(not modelled — velocity)", "meaning": "Very loud."},
+    {"id": "pedal", "name": "Sustain pedal (Ped. / *)", "category": "dynamic", "smufl": "keyboardPedalPed", "compact": "(not modelled)", "meaning": "Press (Ped.) / release (*) the sustain pedal."},
+
+    {"id": "staccato", "name": "Staccato dot", "category": "articulation", "smufl": "articStaccatoAbove", "compact": "(not modelled — articulation)", "meaning": "Dot above/below a notehead = shorten/detach (NOT an augmentation dot, which is to the right)."},
+    {"id": "fermata", "name": "Fermata", "category": "articulation", "smufl": "fermataAbove", "compact": "(not modelled)", "meaning": "Hold the note longer than written."}
+  ]
+}

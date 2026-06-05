@@ -517,6 +517,7 @@ def _flag_severity(msg: str):
         ('stutter', 'warn', 'stutter'),
         ('leap', 'warn', 'leap'),
         ('expected range', 'warn', 'range'),
+        ('may be missing', 'warn', 'gap'),
         ('empty', 'warn', 'empty'),
         ('outside key', 'info', 'key'),
     ]
@@ -779,6 +780,15 @@ def _check_bar_rules(bar: Dict, n_bars: int) -> List[str]:
     bas = midis_by_track.get('bass', []) + midis_by_track.get('bass2', [])
     if mel and bas and max(mel) < min(bas):
         issues.append('melody lies entirely below the bass — staves may be swapped')
+
+    # 6. Gap vs the original: the source (OMR) reading recorded how many notes
+    #    this bar had; if the current transcription has notably fewer, a note was
+    #    likely dropped in editing.
+    src = bar.get('src_notes')
+    if isinstance(src, int) and src > 0:
+        have = sum(len(v) for v in midis_by_track.values())
+        if have < src - 1:
+            issues.append(f'{have} notes but the source had ~{src} — a note may be missing')
 
     # 4. A wholly empty interior bar usually means a measure was skipped.
     if not any_notes and not is_edge:

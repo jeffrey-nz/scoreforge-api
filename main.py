@@ -19,7 +19,7 @@ Run:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import transcribe, validate, correct, jobs
+from app.routes import transcribe, validate, correct, jobs, glyphs
 from app.routes.pipeline import router as pipeline_router
 
 app = FastAPI(
@@ -40,6 +40,7 @@ app.include_router(transcribe.router, prefix="/transcribe", tags=["Legacy"])
 app.include_router(jobs.router,       prefix="/jobs",       tags=["Legacy"])
 app.include_router(validate.router,   prefix="/validate",   tags=["Validation"])
 app.include_router(correct.router,    prefix="/correct",    tags=["Correction"])
+app.include_router(glyphs.router,     prefix="/glyphs",     tags=["Glyphs"])
 
 
 @app.get("/", tags=["Health"])
