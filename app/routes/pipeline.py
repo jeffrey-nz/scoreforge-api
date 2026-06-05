@@ -348,9 +348,13 @@ def get_warnings(job_id: str):
     job = _require_job(job_id)
     from app.pipeline.steps import _recheck_all_bars
     _recheck_all_bars(job)
+    # The fix-queue lists bars that still need attention: flagged AND not yet
+    # human-verified (verifying a bar signs off on it even if a heuristic still
+    # flags it — e.g. a legit modulation or a treble-clef left hand).
     flagged = [{'n': b['n'], 'page': b.get('page'), 'sys': b.get('sys'),
                 'issues': b.get('issues', []), 'flags': b.get('flags', [])}
-               for b in job.bars if b.get('issues')]
+               for b in job.bars if b.get('issues') and not b.get('verified')]
+    verified_flagged = sum(1 for b in job.bars if b.get('issues') and b.get('verified'))
 
     # Per-page segmentation drift: detect measures on each source page and
     # compare to how many bars were transcribed for it.
@@ -395,6 +399,7 @@ def get_warnings(job_id: str):
             by_sev[fl.get('sev', 'warn')] = by_sev.get(fl.get('sev', 'warn'), 0) + 1
             by_cat[fl.get('cat', 'other')] = by_cat.get(fl.get('cat', 'other'), 0) + 1
     return {'flagged': len(flagged), 'total': len(job.bars),
+            'verified_flagged': verified_flagged,
             'by_severity': by_sev, 'by_category': by_cat,
             'bars': flagged, 'pages': page_checks}
 
