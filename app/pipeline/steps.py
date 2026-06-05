@@ -503,6 +503,29 @@ async def run_redo_bar(job: Job, bar_n: int):
 
 # ── Mechanical (AI-free) bar fixes ──────────────────────────────────────────────
 
+def _flag_severity(msg: str):
+    """Classify an issue string into (severity, category). error = almost
+    certainly wrong; warn = likely wrong; info = notable but often legitimate
+    (e.g. a modulation reads as 'outside key')."""
+    m = msg.lower()
+    table = [
+        ('invalid token', 'error', 'token'),
+        ('over a full measure', 'error', 'rhythm'),
+        ('staves may be swapped', 'error', 'voicing'),
+        ('expected ~100%', 'warn', 'rhythm'),
+        ('octave too', 'warn', 'octave'),
+        ('stutter', 'warn', 'stutter'),
+        ('leap', 'warn', 'leap'),
+        ('expected range', 'warn', 'range'),
+        ('empty', 'warn', 'empty'),
+        ('outside key', 'info', 'key'),
+    ]
+    for needle, sev, cat in table:
+        if needle in m:
+            return sev, cat
+    return 'warn', 'other'
+
+
 def _recheck_bar(job: Job, bar: Dict):
     """Recompute a bar's mechanical pitch/rhythm issues + confidence. A bar may
     carry its own 'timeSig' / 'key' override (set from its per-bar settings);
@@ -525,7 +548,16 @@ def _recheck_bar(job: Job, bar: Dict):
     bar['rhythm_issues'] = r
     all_issues = p + r + s
     bar['issues'] = all_issues
-    bar['confidence'] = 1.0 if not all_issues else (0.5 if len(all_issues) <= 2 else 0.2)
+    # Structured flags (severity + category) so the dashboard can colour them and
+    # the AI agents can act on them without re-parsing prose.
+    flags = [dict(zip(('sev', 'cat'), _flag_severity(m)), msg=m) for m in all_issues]
+    bar['flags'] = flags
+    if any(f['sev'] == 'error' for f in flags):
+        bar['confidence'] = 0.2
+    elif any(f['sev'] == 'warn' for f in flags):
+        bar['confidence'] = 0.6
+    else:
+        bar['confidence'] = 1.0          # clean, or info-only (legit chromatic etc.)
     return bar
 
 
@@ -697,6 +729,7 @@ def _check_bar_rules(bar: Dict, n_bars: int) -> List[str]:
     bn = bar.get('n')
     is_edge = (bn == 1 or bn == n_bars)
     any_notes = False
+    midis_by_track: Dict[str, List[int]] = {}
 
     for track in ('melody', 'melody2', 'bass', 'bass2'):
         raw = str(bar.get(track, '') or '').strip()
@@ -710,6 +743,7 @@ def _check_bar_rules(bar: Dict, n_bars: int) -> List[str]:
             issues.append(f"{track}: invalid token(s) {', '.join(bad[:3])}"
                           + (f" (+{len(bad)-3} more)" if len(bad) > 3 else ""))
         midis = [m for m in (_tok_midi(t) for t in toks) if m is not None]
+        midis_by_track[track] = midis
         if midis:
             any_notes = True
         # 2. Octave sanity per staff. Treble voices below G3 (55) are almost
@@ -732,6 +766,19 @@ def _check_bar_rules(bar: Dict, n_bars: int) -> List[str]:
                 best = max(best, run)
             if best >= 5:
                 issues.append(f'{track}: {best} identical notes in a row — check for a stutter')
+        # 4. Melodic leap: a tune jumping more than an octave between adjacent
+        #    notes is rare and usually an octave/wrong-note slip.
+        if track in ('melody', 'melody2'):
+            leap = max((abs(b - a) for a, b in zip(midis, midis[1:])), default=0)
+            if leap > 12:
+                issues.append(f'{track}: {leap}-semitone leap (> an octave) — check for a wrong note')
+
+    # 5. Staff swap / voice crossing: if the whole melody sits below the whole
+    #    bass, the two staves were almost certainly read into the wrong voices.
+    mel = midis_by_track.get('melody', []) + midis_by_track.get('melody2', [])
+    bas = midis_by_track.get('bass', []) + midis_by_track.get('bass2', [])
+    if mel and bas and max(mel) < min(bas):
+        issues.append('melody lies entirely below the bass — staves may be swapped')
 
     # 4. A wholly empty interior bar usually means a measure was skipped.
     if not any_notes and not is_edge:

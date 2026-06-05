@@ -349,7 +349,7 @@ def get_warnings(job_id: str):
     from app.pipeline.steps import _recheck_all_bars
     _recheck_all_bars(job)
     flagged = [{'n': b['n'], 'page': b.get('page'), 'sys': b.get('sys'),
-                'issues': b.get('issues', [])}
+                'issues': b.get('issues', []), 'flags': b.get('flags', [])}
                for b in job.bars if b.get('issues')]
 
     # Per-page segmentation drift: detect measures on each source page and
@@ -387,13 +387,16 @@ def get_warnings(job_id: str):
     except Exception as e:
         page_checks = [{'error': str(e)}]
 
+    # Roll up by severity and category from the structured flags.
+    by_sev: Dict[str, int] = {'error': 0, 'warn': 0, 'info': 0}
     by_cat: Dict[str, int] = {}
     for f in flagged:
-        for iss in f['issues']:
-            cat = iss.split(':')[0] if ':' in iss else iss.split(' ')[0]
-            by_cat[cat] = by_cat.get(cat, 0) + 1
+        for fl in f['flags']:
+            by_sev[fl.get('sev', 'warn')] = by_sev.get(fl.get('sev', 'warn'), 0) + 1
+            by_cat[fl.get('cat', 'other')] = by_cat.get(fl.get('cat', 'other'), 0) + 1
     return {'flagged': len(flagged), 'total': len(job.bars),
-            'by_category': by_cat, 'bars': flagged, 'pages': page_checks}
+            'by_severity': by_sev, 'by_category': by_cat,
+            'bars': flagged, 'pages': page_checks}
 
 
 class BarPatch(BaseModel):
