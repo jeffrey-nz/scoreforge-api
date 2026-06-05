@@ -791,15 +791,29 @@ def _check_bar_rules(bar: Dict, n_bars: int) -> List[str]:
         if have < src - 1:
             issues.append(f'{have} notes but the source had ~{src} — a note may be missing')
 
-    # 7. Octave vs the original: if the melody's register sits ~an octave off the
-    #    OMR's reading of this bar, an octave was likely overridden (a memory-based
-    #    "it should be higher" beats what the source actually shows).
-    src_reg = bar.get('src_reg')
-    mel_mids = sorted(midis_by_track.get('melody', []))
-    if isinstance(src_reg, (int, float)) and mel_mids:
-        cur = mel_mids[len(mel_mids) // 2]
-        if abs(cur - src_reg) >= 9:
-            issues.append(f'melody is ~{round(abs(cur - src_reg) / 12.0, 1)} octave off the source reading — check octave')
+    # 7. Octave vs the original (per pitch-class): if the OMR read a pitch class
+    #    at an octave this bar no longer has — while the bar DOES use that class
+    #    at another octave — a note's octave was overridden. Catches single-note
+    #    octave slips (a memory-based octave beating the source) as well as a
+    #    whole-bar shift.
+    src_pitches = bar.get('src_pitches')
+    if src_pitches:
+        def _pp(nm):
+            mt = re.match(r'^([A-G][#b]?)(-?\d+)$', nm)
+            return (mt.group(1), int(mt.group(2))) if mt else (None, None)
+        cur_oct: Dict[str, set] = {}
+        for t in str(bar.get('melody', '')).split():
+            mt = re.match(r'^([A-G][#b]?-?\d+)\(', t)
+            if mt:
+                c, o = _pp(mt.group(1))
+                if c is not None:
+                    cur_oct.setdefault(c, set()).add(o)
+        for nm in src_pitches:
+            c, o = _pp(nm)
+            if c in cur_oct and o not in cur_oct[c]:
+                issues.append(f'source has {nm} but this bar has {c} only at octave '
+                              f'{",".join(str(x) for x in sorted(cur_oct[c]))} — check octave')
+                break
 
     # 4. A wholly empty interior bar usually means a measure was skipped.
     if not any_notes and not is_edge:

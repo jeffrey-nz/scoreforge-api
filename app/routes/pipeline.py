@@ -762,7 +762,7 @@ async def import_omr(job_id: str, req: ImportOmrReq):
     if str(CORE_DIR) not in _sys.path:
         _sys.path.insert(0, str(CORE_DIR))
     from omer_import import musicxml_to_bars, fit_to_meter, meter_quarters
-    from app.pipeline.steps import _recheck_all_bars, _tok_midi
+    from app.pipeline.steps import _recheck_all_bars
     if not Path(req.musicxml).exists():
         raise HTTPException(404, f"musicxml not found: {req.musicxml}")
     measures = musicxml_to_bars(req.musicxml)
@@ -780,11 +780,13 @@ async def import_omr(job_id: str, req: ImportOmrReq):
         # Remember how many notes the source (OMR) had here, so the checker can
         # later flag a bar that ends up with fewer notes than the original.
         page_bars[i]['src_notes'] = _src_count(measures[i])
-        # Remember the source melody's register (median MIDI) so an octave
-        # override (e.g. raising a figure a memory says should be higher) gets
-        # flagged against what the OMR actually read.
-        mids = sorted(m for m in (_tok_midi(t) for t in measures[i].get('melody', '').split()) if m)
-        page_bars[i]['src_reg'] = mids[len(mids) // 2] if mids else None
+        # Remember the source melody's pitches (name+octave) so a later octave
+        # override — whole-bar OR a single note — gets flagged per pitch-class
+        # against what the OMR actually read.
+        import re as _re
+        page_bars[i]['src_pitches'] = [mt.group(0)
+            for t in measures[i].get('melody', '').split()
+            for mt in [_re.match(r'^[A-G][#b]?-?\d+', t)] if mt]
     _recheck_all_bars(job)
     job.save()
     try:
