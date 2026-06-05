@@ -428,9 +428,17 @@ class BarPatch(BaseModel):
     bass2: Optional[str] = None
     # Structural markers (musical form). repeat_start = |: at this bar's left,
     # repeat_end = :| at its right, volta = 1st/2nd-ending number (1 or 2; 0 clears).
+    # partial = an intentionally short bar (anacrusis/pickup, or a repeat ending
+    # that completes with the pickup) — rendered short and not flagged under-filled.
     repeat_start: Optional[bool] = None
     repeat_end: Optional[bool] = None
     volta: Optional[int] = None
+    partial: Optional[bool] = None
+    # Mid-bar clef changes (e.g. the LH switching to treble clef). Each entry is
+    # {stave: 'treble'|'bass', beat: <quarter-beat offset>, clef: 'treble'|'bass'|'alto'|'tenor'}.
+    # Pitches already encode register; this drives the NOTATION (clef glyph + note
+    # placement after it). Pass [] to clear.
+    clef_changes: Optional[list] = None
 
 
 @router.patch("/jobs/{job_id}/bars/{bar_n}")
@@ -449,6 +457,10 @@ def patch_bar(job_id: str, bar_n: int, patch: BarPatch):
         bar['repeat_end'] = bool(patch.repeat_end)
     if patch.volta is not None:
         bar['volta'] = patch.volta if patch.volta in (1, 2) else None
+    if patch.partial is not None:
+        bar['partial'] = bool(patch.partial)
+    if patch.clef_changes is not None:
+        bar['clef_changes'] = patch.clef_changes
     # Re-validate the edited bar so its flags reflect the new notes immediately
     # (set_bar only writes the strings). Without this an edit's flags stay stale.
     from app.pipeline.steps import _recheck_bar

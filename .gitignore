@@ -19,3 +19,7 @@ _omr/
 
 # Glyph library user data (collected/unidentified glyphs + images)
 app/data/
+
+# Embedded source PDFs — large binaries kept locally for relationships, not in git.
+# The registry (app/core/sources.json) and page renders ARE version-controlled.
+app/core/sources/*.pdf

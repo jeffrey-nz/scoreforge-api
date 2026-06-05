@@ -518,7 +518,8 @@ def _flag_severity(msg: str):
         ('leap', 'warn', 'leap'),
         ('expected range', 'warn', 'range'),
         ('may be missing', 'warn', 'gap'),
-        ('verify rhythm vs source', 'info', 'rhythm'),
+        ('check the source crop', 'info', 'rhythm'),
+        ('rhythm differs from', 'warn', 'rhythm'),
         ('off the source reading', 'info', 'octave'),
         ('empty', 'warn', 'empty'),
         ('outside key', 'info', 'key'),
@@ -545,7 +546,10 @@ def _recheck_bar(job: Job, bar: Dict):
     n_bars = len(job.bars)
     bn = bar.get('n')
     p = _check_pitch_bar(bar, key_pcs)
-    r = _check_rhythm_bar(bar, bar_ticks, allow_short=(bn == 1 or bn == n_bars))
+    # A `partial` bar is intentionally short (an anacrusis/pickup or a 1st/2nd
+    # ending that completes with the pickup on the repeat) — don't flag under-fill.
+    r = _check_rhythm_bar(bar, bar_ticks,
+                          allow_short=(bn == 1 or bn == n_bars or bool(bar.get('partial'))))
     s = _check_bar_rules(bar, n_bars)
     bar['pitch_issues'] = p
     bar['rhythm_issues'] = r
@@ -564,9 +568,48 @@ def _recheck_bar(job: Job, bar: Dict):
     return bar
 
 
+_PITCHSEQ_RE = re.compile(r'([A-Ga-g][#b]?-?\d+)\(')
+_RHYTHMSEQ_RE = re.compile(r'\((w|h|q|8|16|32|64)(\.?)\)')
+
+
+def _check_rhythm_consistency(job: Job):
+    """Cross-bar check: bars with the SAME melodic notes should share the SAME
+    rhythm. Für Elise's figures recur many times (ABACA form); when one copy is
+    rhythmically different it's almost always a mis-read (e.g. one copy kept a
+    dotted note while the others split it into note+rest). Data-only and reliable
+    — it catches inconsistency without having to OMR the source. Appends a flag to
+    the minority bars. Run after _recheck_bar has populated each bar's flags."""
+    groups: Dict[tuple, list] = {}
+    for bar in job.bars:
+        mel = str(bar.get('melody', '') or '')
+        pitches = tuple(_PITCHSEQ_RE.findall(mel))
+        if len(pitches) < 2:
+            continue
+        rhythm = tuple(f'{m[0]}{m[1]}' for m in _RHYTHMSEQ_RE.findall(mel))
+        groups.setdefault(pitches, []).append((bar, rhythm))
+    for pitches, members in groups.items():
+        if len(members) < 2:
+            continue
+        from collections import Counter
+        counts = Counter(r for _, r in members)
+        if len(counts) < 2:
+            continue                       # all copies agree — fine
+        majority, _ = counts.most_common(1)[0]
+        peers = sorted({b['n'] for b, r in members if r == majority})
+        for bar, rhythm in members:
+            if rhythm != majority:
+                msg = (f"melody rhythm differs from {len(peers)} other bar(s) with the same notes "
+                       f"(bars {', '.join(map(str, peers[:6]))}) — likely inconsistent")
+                bar.setdefault('issues', []).append(msg)
+                bar.setdefault('flags', []).append({'sev': 'warn', 'cat': 'rhythm', 'msg': msg})
+                if bar.get('confidence', 1.0) > 0.6:
+                    bar['confidence'] = 0.6
+
+
 def _recheck_all_bars(job: Job):
     for bar in job.bars:
         _recheck_bar(job, bar)
+    _check_rhythm_consistency(job)
 
 
 _OCT_RE = re.compile(r'([A-Ga-g][#b]?)(-?\d+)')
@@ -799,8 +842,11 @@ def _check_bar_rules(bar: Dict, n_bars: int) -> List[str]:
         if len(note_q) >= 2:
             mn, mx = min(note_q), max(note_q)
             if mn <= 0.25 + 1e-6 and mx >= mn * 3 - 1e-6:
-                issues.append(f'{track}: a note {round(mx / mn)}x longer than the 16ths around it '
-                              f'— verify rhythm vs source (a rest may be hidden in a dotted/over-long note)')
+                # AMBIGUOUS from data alone: a long note here is EITHER a genuine
+                # dotted/held note OR a shorter note whose rest got absorbed. Only
+                # the source resolves it, so the message points there explicitly.
+                issues.append(f'{track}: a note {round(mx / mn)}x the surrounding 16ths — check the source crop: '
+                              f'a DOT after the note ⇒ keep it dotted; a REST glyph ⇒ split into note + rest')
 
     # 5. Staff swap / voice crossing: if the whole melody sits below the whole
     #    bass, the two staves were almost certainly read into the wrong voices.

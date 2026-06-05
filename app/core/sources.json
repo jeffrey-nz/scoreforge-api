@@ -1,0 +1,28 @@
+{
+  "_doc": "Registry of source score documents (the music PDFs the transcriptions and glyph crops come from). The PDF binaries live in app/core/sources/<file> and are GITIGNORED (large, public-domain scans); this registry and the page renders are version-controlled. A source links to the piece(s) transcribed from it; via app/core/glyph_samples.json each source's pages further link to the glyph crops and the actual note tokens taken from them. This is the top of the relationship chain: source PDF -> page -> bar -> note token / glyph crop.",
+  "version": 1,
+  "sources": [
+    {
+      "id": "fur_elise_woo59",
+      "name": "Für Elise (WoO 59)",
+      "composer": "Beethoven",
+      "edition": "Breitkopf & Härtel, Beethovens Werke",
+      "imslp": "IMSLP993345 / PMLP14377",
+      "file": "fur_elise_woo59.pdf",
+      "pages": 3,
+      "pieces": ["fur_elise_p1"],
+      "pages_dir": "dashboard/showcase-midi/fur_elise_p1/_pages"
+    },
+    {
+      "id": "mozart_k545",
+      "name": "Piano Sonata No. 16 in C major, K. 545",
+      "composer": "Mozart",
+      "edition": "Breitkopf & Härtel, Mozarts Werke (Serie 20)",
+      "imslp": "IMSLP56442 / PMLP01855",
+      "file": "mozart_k545.pdf",
+      "pages": 8,
+      "pieces": ["kv545"],
+      "pages_dir": "dashboard/showcase-midi/kv545_ai/_pages"
+    }
+  ]
+}

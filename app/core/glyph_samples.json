@@ -2,8 +2,8 @@
   "_doc": "Provenance manifest: links each glyph reference object to REAL occurrences in transcribed music. Every sample is a PNG crop from a specific piece/page/system/bar, and (where a single note carries the symbol) the actual compact-format token it produced. This is the relationship between the reference library and the music itself — given a glyph you can find where it really appears, and given a transcribed token you can resolve its glyph. Image files live at app/core/glyph_images/<glyph_id>/<file>. To add a sample, drop the PNG and add an entry here.",
   "version": 1,
   "pieces": {
-    "fur_elise_p1": {"name": "Für Elise (WoO 59)", "composer": "Beethoven", "edition": "Breitkopf, Beethoven-Werke", "meter": "3/8", "key": "A minor"},
-    "kv545": {"name": "Piano Sonata No.16 in C, K.545", "composer": "Mozart", "edition": "Breitkopf, Mozarts Werke Serie 20", "movements": {"1": "Allegro (C / common time)", "2": "Andante (3/4)", "3": "Rondo. Allegretto (2/4)"}}
+    "fur_elise_p1": {"name": "Für Elise (WoO 59)", "composer": "Beethoven", "edition": "Breitkopf, Beethoven-Werke", "meter": "3/8", "key": "A minor", "source": "fur_elise_woo59"},
+    "kv545": {"name": "Piano Sonata No.16 in C, K.545", "composer": "Mozart", "edition": "Breitkopf, Mozarts Werke Serie 20", "movements": {"1": "Allegro (C / common time)", "2": "Andante (3/4)", "3": "Rondo. Allegretto (2/4)"}, "source": "mozart_k545"}
   },
   "samples": {
     "clef-treble": [
@@ -51,6 +51,13 @@
     ],
     "barline-final": [
       {"file": "k545_mvt3.png", "piece": "kv545", "movement": 3, "page": 8, "system": 6, "bar": -1, "region": [2762, 3170, 2824, 3545], "maps_to": "thin+thick line ending the piece"}
+    ],
+    "repeat-barline": [
+      {"file": "fur_elise.png", "piece": "fur_elise_p1", "page": 1, "system": 2, "bar": 9, "region": [352, 150, 418, 320], "maps_to": "repeat back to the |: (end of the 1st ending)"}
+    ],
+    "volta": [
+      {"file": "fur_elise_v1.png", "piece": "fur_elise_p1", "page": 1, "system": 2, "bar": 9,  "region": [4, 55, 135, 180],  "maps_to": "1st ending (volta 1) — played the first time, then repeats"},
+      {"file": "fur_elise_v2.png", "piece": "fur_elise_p1", "page": 1, "system": 3, "bar": 10, "region": [10, 70, 150, 185], "maps_to": "2nd ending (volta 2) — taken on the repeat"}
     ],
     "acc-sharp": [
       {"file": "fur_elise.png", "piece": "fur_elise_p1", "page": 1, "system": 1, "bar": 2, "region": [792, 160, 852, 258], "note": "D#5", "maps_to": "D#5(16)"}
