@@ -747,14 +747,15 @@ def _check_pitch_bar(bar: Dict, key_pcs: Optional[set]) -> List[str]:
     return issues
 
 
-# A single valid compact token: pitch+octave or rest, with a known duration tag.
-_VALID_TOK_RE = re.compile(r'^([A-Ga-g][#b]?-?\d+|[Rr])\((w|h|q|8|16|32|64)(\.?)\)$')
+# A single valid compact token: one pitch, a chord (pitches joined by '+', struck
+# together — e.g. "A4+C5+E5(q)"), or a rest, with a known duration tag.
+_VALID_TOK_RE = re.compile(
+    r'^([A-Ga-g][#b]?-?\d+(?:\+[A-Ga-g][#b]?-?\d+)*|[Rr])\((w|h|q|8|16|32|64)(\.?)\)$')
 _STEP_PC = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
 
 
-def _tok_midi(tok: str):
-    """MIDI number for a token's pitch, or None for rests/garbage."""
-    m = re.match(r'^([A-Ga-g])([#b]?)(-?\d+)\(', tok)
+def _pitch_midi(name: str):
+    m = re.match(r'^([A-Ga-g])([#b]?)(-?\d+)$', name)
     if not m:
         return None
     pc = _STEP_PC[m.group(1).upper()]
@@ -763,6 +764,14 @@ def _tok_midi(tok: str):
     elif m.group(2) == 'b':
         pc -= 1
     return (int(m.group(3)) + 1) * 12 + pc
+
+
+def _tok_midi(tok: str):
+    """MIDI number for a token's pitch — the TOP note of a chord (the melodic
+    line), or None for rests/garbage."""
+    head = tok.split('(', 1)[0]
+    midis = [m for m in (_pitch_midi(p) for p in head.split('+')) if m is not None]
+    return max(midis) if midis else None
 
 
 _DUR_Q = {'w': 4.0, 'h': 2.0, 'q': 1.0, '8': 0.5, '16': 0.25, '32': 0.125, '64': 0.0625}

@@ -713,13 +713,16 @@ def _parse_rewrite(rewrite):
         if rest:
             out.append((None, _ticks_for_tag(rest.group(1))))
             continue
-        m = re.match(r'^([A-Ga-g][#b]?-?\d+)\(([^)]+)\)$', tok)
+        # A chord ("A4+C5+E5(8)") counts as ONE rhythmic event; represent it by its
+        # top note so duration sums stay correct (full chord pitches live in the bar
+        # string and are rendered/played by the frontend).
+        m = re.match(r'^([A-Ga-g][#b]?-?\d+(?:\+[A-Ga-g][#b]?-?\d+)*)\(([^)]+)\)$', tok)
         if not m:
             continue
-        midi = name_to_midi(m.group(1))
-        if midi is None:
+        midis = [mm for mm in (name_to_midi(p) for p in m.group(1).split('+')) if mm is not None]
+        if not midis:
             continue
-        out.append((midi, _ticks_for_tag(m.group(2))))
+        out.append((max(midis), _ticks_for_tag(m.group(2))))
     return out
 
 

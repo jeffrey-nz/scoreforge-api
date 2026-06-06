@@ -65,9 +65,10 @@ def fit_to_meter(token_str: str, meter_q: float) -> str:
 
 def musicxml_to_bars(path: str, drop_pad_rests: bool = True) -> List[Dict]:
     """Return [{'melody','bass'}] per measure (treble part -> melody, bass part
-    -> bass). Chords reduce to their top note in the treble, bottom in the bass.
-    Padding rests (a quarter or longer, from oemer's 4/4 assumption) are dropped
-    so the recovered bars hold just the engraved notes for review against meter.
+    -> bass). Chords are kept in full as a '+'-joined token (low to high), e.g.
+    A4+C5+E5(q). Padding rests (a quarter or longer, from oemer's 4/4 assumption)
+    are dropped so the recovered bars hold just the engraved notes for review
+    against meter.
     """
     import music21 as m21
     score = m21.converter.parse(path)
@@ -85,8 +86,8 @@ def musicxml_to_bars(path: str, drop_pad_rests: bool = True) -> List[Dict]:
                     continue                       # skip 4/4-padding rest
                 toks.append(f'R({_dur_tag(el)})')
             elif el.isChord:
-                ps = sorted(el.pitches, key=lambda p: p.midi)
-                toks.append(f'{_name(ps[-1] if pick_top else ps[0])}({_dur_tag(el)})')
+                ps = sorted(el.pitches, key=lambda p: p.midi)   # low → high
+                toks.append('+'.join(_name(p) for p in ps) + f'({_dur_tag(el)})')
             else:
                 toks.append(f'{_name(el.pitch)}({_dur_tag(el)})')
         return ' '.join(toks)

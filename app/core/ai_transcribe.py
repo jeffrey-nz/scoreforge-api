@@ -653,9 +653,12 @@ Notation rules:
     a single voice (the usual case) — e.g. Für Elise's opening run is one voice,
     but a bar where the right hand sustains a note while playing faster notes
     beneath needs melody + melody2.
-  - List notes left-to-right in time order; for a chord (notes struck together
-    in ONE voice) list its notes in order. Two different RHYTHMS at once = two
-    voices (use melody2/bass2), not a chord.
+  - List notes left-to-right in time order. A CHORD (two or more notes struck
+    together in ONE voice, sharing a stem) is ONE token: join its pitches with
+    '+', low to high, then the shared duration — e.g. A4+C5+E5(q) or G3+B3(8).
+    Capture EVERY notehead of the chord, do not reduce it to a single note.
+    Two notes with different RHYTHMS at once are NOT a chord — that is two
+    voices (use melody2/bass2).
   - Use "(empty)" only for a staff that is silent for the WHOLE bar.
   - "key"/"timeSig"/"bpm" describe the piece; estimate bpm from the tempo
     marking. Only the FIRST page's values are used.
