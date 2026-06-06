@@ -659,6 +659,12 @@ Notation rules:
     Capture EVERY notehead of the chord, do not reduce it to a single note.
     Two notes with different RHYTHMS at once are NOT a chord — that is two
     voices (use melody2/bass2).
+  - GRACE NOTES / embellishments (small notes printed before a main note, e.g.
+    an acciaccatura or a short ornamental run) use the duration tag 'g' and are
+    written immediately BEFORE the note they decorate: e.g. "D5(g) C5(q)" or a
+    run "E4(g) G4(g) B4(g) C5(q)". A grace note is non-metrical — it does NOT
+    count toward the bar's duration, so do not include it when summing the
+    measure. Only the following main note carries beat value.
   - Use "(empty)" only for a staff that is silent for the WHOLE bar.
   - "key"/"timeSig"/"bpm" describe the piece; estimate bpm from the tempo
     marking. Only the FIRST page's values are used.

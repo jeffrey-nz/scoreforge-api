@@ -748,9 +748,11 @@ def _check_pitch_bar(bar: Dict, key_pcs: Optional[set]) -> List[str]:
 
 
 # A single valid compact token: one pitch, a chord (pitches joined by '+', struck
-# together — e.g. "A4+C5+E5(q)"), or a rest, with a known duration tag.
+# together — e.g. "A4+C5+E5(q)"), or a rest, with a known duration tag. The 'g'
+# tag marks a non-metrical GRACE note (an ornament on the following note); it
+# carries no beat value, so it never counts toward the bar's duration.
 _VALID_TOK_RE = re.compile(
-    r'^([A-Ga-g][#b]?-?\d+(?:\+[A-Ga-g][#b]?-?\d+)*|[Rr])\((w|h|q|8|16|32|64)(\.?)\)$')
+    r'^([A-Ga-g][#b]?-?\d+(?:\+[A-Ga-g][#b]?-?\d+)*|[Rr])\((w|h|q|8|16|32|64|g)(\.?)\)$')
 _STEP_PC = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
 
 
@@ -774,7 +776,7 @@ def _tok_midi(tok: str):
     return max(midis) if midis else None
 
 
-_DUR_Q = {'w': 4.0, 'h': 2.0, 'q': 1.0, '8': 0.5, '16': 0.25, '32': 0.125, '64': 0.0625}
+_DUR_Q = {'w': 4.0, 'h': 2.0, 'q': 1.0, '8': 0.5, '16': 0.25, '32': 0.125, '64': 0.0625, 'g': 0.0}
 
 
 def _tok_qlen(tok: str):

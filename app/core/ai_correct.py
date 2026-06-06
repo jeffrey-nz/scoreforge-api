@@ -673,8 +673,11 @@ def parse_corrections(ai_response):
 
 
 def _ticks_for_tag(tag):
-    """Parse a duration tag ('16', 'q.', '8', '5t', ...) into ticks at div=16."""
+    """Parse a duration tag ('16', 'q.', '8', '5t', ...) into ticks at div=16.
+    A grace tag ('g') is non-metrical and contributes 0 ticks."""
     tag = tag.strip()
+    if tag == 'g':
+        return 0
     if tag in TAG_TO_TICKS:
         return TAG_TO_TICKS[tag]
     m = re.match(r'^(\d+)t$', tag)            # raw "<n>t" form
@@ -719,6 +722,8 @@ def _parse_rewrite(rewrite):
         m = re.match(r'^([A-Ga-g][#b]?-?\d+(?:\+[A-Ga-g][#b]?-?\d+)*)\(([^)]+)\)$', tok)
         if not m:
             continue
+        if m.group(2).strip() == 'g':
+            continue   # grace note: a non-metrical ornament, not a rhythmic event
         midis = [mm for mm in (name_to_midi(p) for p in m.group(1).split('+')) if mm is not None]
         if not midis:
             continue
