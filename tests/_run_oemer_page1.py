@@ -12,7 +12,9 @@ os.makedirs(f'{OUT}/omr_out', exist_ok=True)
 
 t0 = time.time()
 doc = fitz.open(SRC)
-zoom = 300 / 72.0
+# 150 DPI: 300 DPI (2700x3600) OOMs oemer's onnxruntime (~680MB buffer); a
+# quarter of the pixels keeps the allocation in range.
+zoom = 150 / 72.0
 pix = doc[0].get_pixmap(matrix=fitz.Matrix(zoom, zoom))
 img = f'{OUT}/fe_page1.png'
 pix.save(img)

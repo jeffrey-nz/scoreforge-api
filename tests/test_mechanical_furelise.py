@@ -7,7 +7,8 @@ Report: python tests/test_mechanical_furelise.py        # per-bar diff + pass ra
 Requires the cached oemer MusicXML (tests/fixtures/omr_out/*.musicxml); generate
 it once with:  python tests/_run_oemer_page1.py
 """
-import os
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pytest
 import mechanical_compare as mc
 
@@ -32,15 +33,19 @@ if __name__ == '__main__':
         print('No cached MusicXML yet. Run: python tests/_run_oemer_page1.py')
         raise SystemExit(1)
     print(f'mechanical measures parsed: {len(mech)}\n')
-    npass = 0
+    npass = npitch = 0
     for b in _PAGE1:
         m = mc.mech_for_bar(mech, b['n'])
         ok = mc.bar_matches(b, m)
-        npass += ok
-        print(f"bar {b['n']:>3}: {'PASS' if ok else 'FAIL'}")
+        pok = mc.bar_pitch_matches(b, m)
+        npass += ok; npitch += pok
+        tag = 'PASS' if ok else ('pitch-ok' if pok else 'FAIL')
+        print(f"bar {b['n']:>3}: {tag}")
         if not ok:
             print(f"      gold mel: {b.get('melody')}")
             print(f"      mech mel: {m and m.get('melody')}")
             print(f"      gold bas: {b.get('bass')}")
             print(f"      mech bas: {m and m.get('bass')}")
-    print(f"\n=== {npass}/{len(_PAGE1)} verified page-1 bars reproduced mechanically ===")
+    n = len(_PAGE1)
+    print(f"\n=== EXACT (pitch+rhythm): {npass}/{n}   PITCH-ONLY: {npitch}/{n} ===")
+    print("    (rhythm is the gap — oemer's durations are unreliable; pitches read far better)")

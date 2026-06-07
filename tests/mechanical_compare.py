@@ -50,10 +50,24 @@ def parse_voice(s):
 
 
 def bar_matches(gold, mech):
+    """Strict: pitch-set AND duration sequences match in both voices."""
     if mech is None:
         return False
     return (parse_voice(gold.get('melody')) == parse_voice(mech.get('melody')) and
             parse_voice(gold.get('bass')) == parse_voice(mech.get('bass')))
+
+
+def pitch_seq(s):
+    """Sounding pitches in order (drop rests + durations) — an OMR pitch-accuracy
+    metric independent of the (unreliable) mechanical rhythm."""
+    return [ms for ms, _t in parse_voice(s) if ms]
+
+
+def bar_pitch_matches(gold, mech):
+    if mech is None:
+        return False
+    return (pitch_seq(gold.get('melody')) == pitch_seq(mech.get('melody')) and
+            pitch_seq(gold.get('bass')) == pitch_seq(mech.get('bass')))
 
 
 def load_gold():
