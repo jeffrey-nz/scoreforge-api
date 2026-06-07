@@ -1,0 +1,6 @@
+# Derived from the gitignored source PDF / regenerable — keep local only.
+fe_page*.png
+omr_out/
+oemer_run.log
+# The hand-verified gold standard (fur_elise_gold.json) IS committed — it's just
+# note strings (public-domain Beethoven), the test oracle.

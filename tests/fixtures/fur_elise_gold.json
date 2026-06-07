@@ -1,0 +1,357 @@
+{
+  "meta": {
+    "key": "A minor",
+    "timeSig": "3/8",
+    "bpm": 70
+  },
+  "bars": [
+    {
+      "n": 1,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "E5(16) D#5(16)",
+      "melody2": "",
+      "bass": "",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 3,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "A4(8) R(16) C4(16) E4(16) A4(16)",
+      "melody2": "",
+      "bass": "A2(16) E3(16) A3(16) R(16) R(8)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 4,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "B4(8) R(16) E4(16) G#4(16) B4(16)",
+      "melody2": "",
+      "bass": "E2(16) E3(16) G#3(16) R(16) R(8)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 5,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "C5(8) R(16) E4(16) E5(16) D#5(16)",
+      "melody2": "",
+      "bass": "A2(16) E3(16) A3(16) R(16) R(8)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 6,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "E5(16) D#5(16) E5(16) B4(16) D5(16) C5(16)",
+      "melody2": "",
+      "bass": "",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 7,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "A4(8) R(16) C4(16) E4(16) A4(16)",
+      "melody2": "",
+      "bass": "A2(16) E3(16) A3(16) R(16) R(8)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 8,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "B4(8) R(16) E4(16) C5(16) B4(16)",
+      "melody2": "",
+      "bass": "E2(16) E3(16) G#3(16) R(16) R(8)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 9,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "A4(q)",
+      "melody2": "",
+      "bass": "A2(16) E3(16) A3(16) R(16)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 10,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "A4(8) R(16) B4(16) C5(16) D5(16)",
+      "melody2": "",
+      "bass": "A2(16) E3(16) A3(16) R(16) R(8)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 11,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "E5(8.) G4(16) F5(16) E5(16)",
+      "melody2": "",
+      "bass": "C3(16) G3(16) C4(16) R(16) R(8)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 12,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "D5(8.) F4(16) E5(16) D5(16)",
+      "melody2": "",
+      "bass": "G2(16) G3(16) B3(16) R(16) R(8)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 13,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "C5(8.) E4(16) D5(16) C5(16)",
+      "melody2": "",
+      "bass": "A2(16) E3(16) A3(16) R(16) R(8)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 14,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "B4(8) R(16) E4(16) E5(16) R(16)",
+      "melody2": "",
+      "bass": "E2(16) E3(16) E4(16) R(16) R(16) E4(16)",
+      "bass2": "",
+      "clef_changes": [
+        {
+          "beat": 1.25,
+          "clef": "treble",
+          "stave": "bass"
+        }
+      ]
+    },
+    {
+      "n": 15,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "R(16) E5(16) E6(16) R(8) D#5(16)",
+      "melody2": "",
+      "bass": "E5(16) R(8) D#5(16) E5(16) R(16)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 16,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "E5(8) R(16) D#5(16) E5(16) D#5(16)",
+      "melody2": "",
+      "bass": "R(16) D#5(16) E5(16) R(16) R(8)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 17,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "E5(16) D#5(16) E5(16) B4(16) D5(16) C5(16)",
+      "melody2": "",
+      "bass": "",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 18,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "A4(8) R(16) B3(16) E4(16) A4(16)",
+      "melody2": "",
+      "bass": "A2(16) E3(16) A3(16) R(16) R(8)",
+      "bass2": "",
+      "clef_changes": [
+        {
+          "beat": 0,
+          "clef": "bass",
+          "stave": "bass"
+        }
+      ]
+    },
+    {
+      "n": 19,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "B4(8) R(16) E4(16) G#4(16) B4(16)",
+      "melody2": "",
+      "bass": "D2(16) E3(16) G#3(16) R(16) R(8)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 20,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "C5(8) R(16) E4(16) E5(16) D#5(16)",
+      "melody2": "",
+      "bass": "A2(16) E3(16) A3(16) R(16) R(8)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 21,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "E5(16) D#5(16) E5(16) B4(16) D5(16) C5(16)",
+      "melody2": "",
+      "bass": "",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 22,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "A4(8) R(16) C4(16) E4(16) A4(16)",
+      "melody2": "",
+      "bass": "A2(16) E3(16) A3(16) R(16) R(8)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 23,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "B4(8) R(16) E4(16) C5(16) B4(16)",
+      "melody2": "",
+      "bass": "E2(16) E3(16) G#3(16) R(16) R(8)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 24,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "A4(8) R(16) B4(16) C5(16) D5(16)",
+      "melody2": "",
+      "bass": "A2(16) E3(16) A3(16) R(16) R(8)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 25,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "A4(8) R(16) F4+C5(16) G4+C5(16) E4+G4+C5(16)",
+      "melody2": "",
+      "bass": "A2(16) E3(16) A3(16) Bb3+C4(16) A3+C4(16) G3+Bb3+C4(16)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 26,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "F4(g) A4(g) C5(q) F5(16.) E5(32)",
+      "melody2": "",
+      "bass": "F3(16) A3(16) C4(16) A3(16) C4(16) A3(16)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 27,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "E5(8) D5(8) Bb5(16.) A5(32)",
+      "melody2": "",
+      "bass": "F3(16) B3(16) D4(16) B3(16) D4(16) Bb3(16)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 28,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "A5(16) G5(16) F5(16) E5(16) D5(16) C5(16)",
+      "melody2": "",
+      "bass": "F3(16) E4(16) F3+G3+Bb3(16) E4(16) F3+G3+Bb3(16) E4(16)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 30,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "C5(q) D5(16) D#5(16)",
+      "melody2": "",
+      "bass": "F3(16) A3(16) C4(16) A3(16) C4(16) A3(16)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 31,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "E5(8.) E5(16) F5(16) A4(16)",
+      "melody2": "",
+      "bass": "E3(16) A3(16) C4(16) A3(16) D3+D4(16) F3(16)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 32,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "C5(q) D5(16.) B4(32)",
+      "melody2": "",
+      "bass": "G3(16) E4(16) G3(16) G4(16) G3(16) G4(16)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 33,
+      "page": 1,
+      "timeSig": "3/8",
+      "melody": "C5(32) G5(32) G4(32) G5(32) A4(32) G5(32) B4(32) G5(32) C5(32) G5(32) D5(32) G5(32)",
+      "melody2": "",
+      "bass": "C4+E4(8) R(16) F4+G4(16) E4+G4(16) E4+F4+G4(16)",
+      "bass2": "",
+      "clef_changes": [
+        {
+          "stave": "bass",
+          "beat": 0,
+          "clef": "treble"
+        }
+      ]
+    },
+    {
+      "n": 53,
+      "page": 2,
+      "timeSig": "3/8",
+      "melody": "E5(16) E6(16) D#5(16) E5(16) D#5(16) E5(16) D#5(16)",
+      "melody2": "",
+      "bass": "E5(8) D#5(16) E5(16) D#5(16) E5(16)",
+      "bass2": "",
+      "clef_changes": null
+    },
+    {
+      "n": 88,
+      "page": 3,
+      "timeSig": "3/8",
+      "melody": "E5(16) E6(16) D#5(16) E5(16) D#5(16) E5(16) D#5(16)",
+      "melody2": "",
+      "bass": "E5(8) D#5(16) E5(16) D#5(16) E5(16)",
+      "bass2": "",
+      "clef_changes": null
+    }
+  ]
+}
