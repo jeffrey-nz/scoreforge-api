@@ -70,6 +70,25 @@ def bar_pitch_matches(gold, mech):
             pitch_seq(gold.get('bass')) == pitch_seq(mech.get('bass')))
 
 
+def onset_seq(s):
+    """[(pitch-set, onset-tick)] for sounding notes — rests advance the cursor but
+    aren't events. Ignores held-duration and how trailing rests are split, so it
+    measures the audible question: do the notes land on the right beats?"""
+    seq, cur = [], 0
+    for ms, ticks in parse_voice(s):
+        if ms:
+            seq.append((ms, cur))
+        cur += ticks
+    return seq
+
+
+def bar_onset_matches(gold, mech):
+    if mech is None:
+        return False
+    return (onset_seq(gold.get('melody')) == onset_seq(mech.get('melody')) and
+            onset_seq(gold.get('bass')) == onset_seq(mech.get('bass')))
+
+
 def load_gold():
     with open(GOLD, encoding='utf-8') as f:
         return json.load(f)
@@ -95,8 +114,8 @@ def mechanical_bars(timesig='3/8'):
     from app.core import omer_import
     raw = omer_import.musicxml_to_bars(mxml)
     mq = omer_import.meter_quarters(timesig)
-    return [{'melody': omer_import.fit_to_meter(b.get('melody', ''), mq),
-             'bass':   omer_import.fit_to_meter(b.get('bass', ''), mq)} for b in raw]
+    return [{'melody': omer_import.fit_to_meter(b.get('melody', ''), mq, slack='absorb'),
+             'bass':   omer_import.fit_to_meter(b.get('bass', ''), mq, slack='trail')} for b in raw]
 
 
 def mech_for_bar(mech_bars, n):

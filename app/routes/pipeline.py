@@ -30,7 +30,7 @@ from app.pipeline.job import (create_job, get_job, list_jobs, discover_jobs,
 from app.pipeline.steps import (run_step, run_approve, run_feedback, run_read,
                                 run_recompile_page, cancel_job, run_redo_bar,
                                 bar_crop_path, apply_bar_transform, set_meta,
-                                generate_bar_crops)
+                                generate_bar_crops, _ensure_core_on_path)
 
 router = APIRouter()
 
@@ -494,6 +494,29 @@ def get_bar_crop(job_id: str, bar_n: int):
     return FileResponse(str(crop), media_type='image/png')
 
 
+@router.get("/jobs/{job_id}/bars/{bar_n}/detect")
+def get_bar_detect(job_id: str, bar_n: int):
+    """Geometry of the bar's transcribed glyphs on its source crop: detected
+    staff positions + each note/rest/clef placed at its real staff height and
+    musical onset, in normalised (0..1) coords. Powers the 'detected' overlay
+    that draws a box on each glyph and a line to its label."""
+    job = _require_job(job_id)
+    bar = job.get_bar(bar_n)
+    if bar is None:
+        raise HTTPException(404, f"Bar {bar_n} not found")
+    crop = bar_crop_path(job, bar_n)
+    if not crop or not Path(crop).exists():
+        raise HTTPException(404, "No source crop for this bar")
+    _ensure_core_on_path()
+    import glyph_detect
+    voices = {k: bar.get(k, '') for k in ('melody', 'melody2', 'bass', 'bass2')}
+    voices['timeSig'] = bar.get('timeSig') or (job.meta or {}).get('timeSig') or '3/8'
+    layout = glyph_detect.bar_layout(str(crop), voices, bar_n=bar_n)
+    if layout is None:
+        raise HTTPException(422, "Could not detect staves on this crop")
+    return layout
+
+
 @router.get("/jobs/{job_id}/bars/{bar_n}/grid")
 def get_bar_grid(job_id: str, bar_n: int):
     """Source crop overlaid with a pitch-labelled staff grid — a mechanical
@@ -820,8 +843,8 @@ async def import_omr(job_id: str, req: ImportOmrReq):
     for i in range(n):
         # oemer pitch sequence (reliable) re-quantised to the meter (its rhythm
         # is not reliable here); review then fixes the inner rhythm/octaves.
-        page_bars[i]['melody'] = fit_to_meter(measures[i].get('melody', ''), meter_q)
-        page_bars[i]['bass'] = fit_to_meter(measures[i].get('bass', ''), meter_q)
+        page_bars[i]['melody'] = fit_to_meter(measures[i].get('melody', ''), meter_q, slack='absorb')
+        page_bars[i]['bass'] = fit_to_meter(measures[i].get('bass', ''), meter_q, slack='trail')
         # Remember how many notes the source (OMR) had here, so the checker can
         # later flag a bar that ends up with fewer notes than the original.
         page_bars[i]['src_notes'] = _src_count(measures[i])
@@ -896,6 +919,39 @@ def get_page_image(job_id: str, page_n: int):
     if not img.exists():
         raise HTTPException(404, f"Page {page_n} not found")
     return FileResponse(str(img), media_type='image/png')
+
+
+@router.get("/jobs/{job_id}/page/{page_n}/regions")
+def get_page_regions(job_id: str, page_n: int):
+    """Map this page's transcribed bars to regions on the source page (detected
+    systems × barlines), normalised 0..1 — so the UI can outline/highlight each
+    bar segment over the original page for a full overview."""
+    job = _require_job(job_id)
+    pages_dir = job.out_dir / '_pages'
+    png = pages_dir / f'page_{page_n:02d}.png'
+    if not png.exists():
+        raise HTTPException(404, f"Page {page_n} not found")
+    _ensure_core_on_path()
+    import ai_transcribe as atr
+    from PIL import Image
+    pw, ph = Image.open(png).size
+    bands = atr._detect_systems(str(png)) or []
+    strips = sorted(pages_dir.glob(f'page_{page_n:02d}_sys_*.png'))
+    page_bars = [b for b in job.bars if int(b.get('page') or 1) == page_n]
+    out, bi = [], 0
+    for k, (top, bot) in enumerate(bands):
+        pos = atr._detect_barline_positions(strips[k]) if k < len(strips) else None
+        if not pos or len(pos) < 2:
+            continue
+        for j in range(len(pos) - 1):             # one measure between barlines
+            if bi >= len(page_bars):
+                break
+            b = page_bars[bi]; bi += 1
+            out.append({'n': b['n'], 'verified': bool(b.get('verified')),
+                        'x': round(pos[j] / pw, 4), 'y': round(top / ph, 4),
+                        'w': round((pos[j + 1] - pos[j]) / pw, 4),
+                        'h': round((bot - top) / ph, 4)})
+    return {'w': pw, 'h': ph, 'regions': out}
 
 
 # ── Meta suggestion ────────────────────────────────────────────────────────────

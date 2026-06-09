@@ -23,3 +23,12 @@ app/data/
 # Embedded source PDFs — large binaries kept locally for relationships, not in git.
 # The registry (app/core/sources.json) and page renders ARE version-controlled.
 app/core/sources/*.pdf
+
+# K545 (and other piece) working renders — derived from gitignored source PDFs.
+# MusicXML outputs in the same folder ARE committed (they're the OMR fixtures).
+tests/fixtures/k545_work/*.png
+tests/fixtures/k545_work/*.err
+tests/fixtures/k545_work/_strip_*.png
+
+# Root-level diagnostic / scratch scripts
+_diag_p1.py

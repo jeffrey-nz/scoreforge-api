@@ -36,6 +36,14 @@ def _ql_to_tag(ql: float) -> str:
     return min(_QL_SNAP, key=lambda bt: abs(bt[0] - ql))[1]
 
 
+def _floor_tag(ql: float):
+    """Largest (quarter-length, tag) that is <= ql — snaps DOWN so a held note
+    never rounds up past the remaining room in the bar (which would overflow it
+    and drop later notes)."""
+    cands = [bt for bt in _QL_SNAP if bt[0] <= ql + 1e-6]
+    return max(cands) if cands else _QL_SNAP[-1]
+
+
 def meter_quarters(timesig: str) -> float:
     try:
         n, d = (int(x) for x in str(timesig).split('/'))
@@ -44,22 +52,64 @@ def meter_quarters(timesig: str) -> float:
         return 4.0
 
 
-def fit_to_meter(token_str: str, meter_q: float) -> str:
+def _rest_tokens(ql: float, start: float = 0.0, grid: float = 0.5) -> List[str]:
+    """Split `ql` quarter-lengths of silence into compact rest tokens that don't
+    cross the beat grid (default eighth-note = 0.5ql) — standard engraving, and
+    what the hand-verified bars use (a 3-sixteenth tail from beat 1.5 becomes
+    R(16) R(8), not R(8.))."""
+    out: List[str] = []
+    cur, rem = start, ql
+    while rem > 1e-6:
+        to_grid = grid - (cur % grid)
+        if to_grid < 1e-6:
+            to_grid = grid
+        chunk = min(to_grid, rem)
+        out.append(f'R({_ql_to_tag(chunk)})')
+        cur += chunk
+        rem -= chunk
+    return out
+
+
+def fit_to_meter(token_str: str, meter_q: float, slack: str = 'absorb') -> str:
     """Re-quantise a bar to its meter using oemer's (reliable) PITCH sequence but
-    NOT its (unreliable) durations: drop rests, lay the notes as 16ths, and if
-    they under-fill, lengthen the first (downbeat) note to absorb the slack — so
-    runs come out as exact 16ths and held-note bars get a long downbeat + 16ths.
-    A pragmatic playable default; exact inner rhythm is then a review fix."""
+    NOT its (unreliable) durations: drop rests, lay the notes as 16ths, and place
+    the leftover (`slack`) one of two ways:
+
+      'absorb' (melody/sustained voices): lengthen the first (downbeat) note to
+          eat the slack — held-note bars get a long downbeat + 16ths, runs come
+          out as exact 16ths.
+      'trail'  (bass/detached accompaniment): keep every note a 16th and append
+          the slack as trailing rests — a broken-chord arpeggio that doesn't
+          sustain, which lands the inner notes on the correct beats.
+
+    Picking the mode per voice (absorb melody, trail bass) markedly improves note
+    *onset* accuracy on broken-chord textures; exact inner rhythm/rest-splitting
+    is still a review fix (oemer can't recover it). Denser-than-16ths bars are
+    split evenly as a fallback."""
     pitches = [t.split('(')[0] for t in token_str.split() if not t[:2].upper().startswith('R')]
     n = len(pitches)
     if n == 0:
         return ''
     base = 0.25
     if n * base <= meter_q + 1e-6:
-        durs = [base] * n
-        durs[0] += meter_q - n * base          # held downbeat absorbs the slack
-    else:
-        durs = [meter_q / n] * n               # denser than 16ths: split evenly
+        rest_ql = meter_q - n * base
+        if slack == 'trail':
+            toks = [f'{p}(16)' for p in pitches]
+            if rest_ql > 1e-6:
+                toks += _rest_tokens(rest_ql, start=n * base)
+            return ' '.join(toks)
+        # 'absorb': the downbeat holds the slack — but snap it DOWN to a real note
+        # value (a 2-note 3/8 bar wants a 1.25q downbeat, which has no single tag;
+        # rounding up to a dotted quarter overflowed the bar and dropped the 2nd
+        # note). Pad any leftover with trailing rests so the bar is exactly full.
+        down_ql, down_tag = _floor_tag(meter_q - (n - 1) * base)
+        toks = [f'{pitches[0]}({down_tag})'] + [f'{p}(16)' for p in pitches[1:]]
+        used = down_ql + (n - 1) * base
+        if used < meter_q - 1e-6:
+            toks += _rest_tokens(meter_q - used, start=used)
+        return ' '.join(toks)
+    # denser than 16ths: split evenly
+    durs = [meter_q / n] * n
     return ' '.join(f'{p}({_ql_to_tag(d)})' for p, d in zip(pitches, durs))
 
 
